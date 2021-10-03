@@ -20,7 +20,6 @@ import static com.google.common.base.Preconditions.checkState;
 public class SingleCexStorage<S extends State, A extends Action> extends CexStorage<S,A> {
 	private final Set<Integer> counterexamples = new LinkedHashSet<>();
 	private final Set<Integer> argprecs = new LinkedHashSet<>();
-//	private final Map<Integer, Set<Integer>> counterexamples = new LinkedHashMap<>();
 	private Integer currentArgHash = null;
 
 	<P extends Prec> void setCurrentArg(AbstractArg<S,A,P> arg) {
@@ -32,15 +31,6 @@ public class SingleCexStorage<S extends State, A extends Action> extends CexStor
 		int cexHashCode = cex.hashCode();
 		counterexamples.add(cexHashCode);
 		argprecs.add(currentArgHash);
-		/*
-		if(counterexamples.containsKey(currentArgHash)) {
-			counterexamples.get(currentArgHash).add(cexHashCode);
-		} else {
-			LinkedHashSet<Integer> cexHashCodes = new LinkedHashSet<>();
-			cexHashCodes.add(cexHashCode);
-			counterexamples.put(currentArgHash, cexHashCodes);
-		}
-		*/
 	}
 
 	boolean checkIfCounterexampleNew(ArgTrace<S,A> cex) {
@@ -51,13 +41,6 @@ public class SingleCexStorage<S extends State, A extends Action> extends CexStor
 				return false;
 			}
 		}
-		/*
-		if (counterexamples.containsKey(currentArgHash)) {
-			if (counterexamples.get(currentArgHash).contains(cexHashCode)) {
-				return false;
-			}
-		}
-		*/
 
 		return true;
 	}
