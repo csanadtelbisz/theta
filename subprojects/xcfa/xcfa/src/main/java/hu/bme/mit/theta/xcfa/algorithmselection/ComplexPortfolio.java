@@ -222,14 +222,14 @@ public class ComplexPortfolio extends AbstractPortfolio {
 			return result.get2().get();
 		} else if(!result.get1().equals(Result.TIMEOUT)) {
 			CegarConfiguration bitvecConf2 = new CegarConfiguration(
-					CfaConfigBuilder.Domain.EXPL,
+					CfaConfigBuilder.Domain.PRED_CART,
 					CfaConfigBuilder.Refinement.NWT_IT_WP,
 					CfaConfigBuilder.PrecGranularity.GLOBAL,
 					CfaConfigBuilder.Search.ERR,
 					CfaConfigBuilder.PredSplit.WHOLE,
 					1,
 					CfaConfigBuilder.InitPrec.EMPTY,
-					PruneStrategy.FULL,
+					PruneStrategy.LAZY,
 					CfaConfigBuilder.Encoding.LBE,
 					true
 			);
