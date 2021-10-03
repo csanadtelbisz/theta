@@ -257,8 +257,8 @@ public class XcfaCli {
 			io.printStackTrace();
 		} catch (Exception e) {
 			e.printStackTrace();
-			System.err.println("Frontend failed!");
-			System.exit(-80);
+			System.err.println(ErrorCode.FRONTEND_FAIL.msg);
+			System.exit(ErrorCode.FRONTEND_FAIL.code);
 		}
 
 		try {
@@ -331,7 +331,8 @@ public class XcfaCli {
 							sw.stop();
 							System.out.println("walltime: " + elapsed + " ms");
 							System.out.println("cputime: " + CpuTimeKeeper.getCurrentCpuTime() + " s");
-							System.exit(-43); // portfolio timeout
+							System.err.println(ErrorCode.PORTFOLIO_TIMEOUT.msg);
+							System.exit(ErrorCode.PORTFOLIO_TIMEOUT.code); // portfolio timeout
 						}
 						break;
 					case COMPLEX:
@@ -344,7 +345,8 @@ public class XcfaCli {
 							sw.stop();
 							System.out.println("walltime: " + elapsed + " ms");
 							System.out.println("cputime: " + CpuTimeKeeper.getCurrentCpuTime() + " s");
-							System.exit(-43); // portfolio timeout
+							System.err.println(ErrorCode.PORTFOLIO_TIMEOUT.msg);
+							System.exit(ErrorCode.PORTFOLIO_TIMEOUT.code); // portfolio timeout
 						}
 						break;
 					default:
@@ -357,8 +359,8 @@ public class XcfaCli {
 					writeXcfaWithCex(xcfa, status.asUnsafe());
 				}
 			} else {
-				System.err.println("Cannot transform XCFA into CFA");
-				System.exit(-50); // Cannot create CFA
+				System.err.println(ErrorCode.CANNOT_CREATE_CFA.msg);
+				System.exit(ErrorCode.CANNOT_CREATE_CFA.code); // Cannot create CFA
 				// BoundedMultithreadedAnalysis parametricAnalysis = XcfaAnalysis.createParametricAnalysis(xcfa);
 			}
 
@@ -400,8 +402,8 @@ public class XcfaCli {
 		try {
 			return configuration.check();
 		} catch (final NotSolvableException exception) {
-			System.err.println("Configuration failed (stuck)");
-			System.exit(-30);
+			System.err.println(ErrorCode.STUCK.msg);
+			System.exit(ErrorCode.STUCK.code);
 			throw exception;
 		} catch (final Exception ex) {
 			String message = ex.getMessage() == null ? "(no message)" : ex.getMessage();
