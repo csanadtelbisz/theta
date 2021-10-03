@@ -611,7 +611,7 @@ public class ExpressionVisitor extends CBaseVisitor<Expr<?>> {
 	public Expr<?> visitPrimaryExpressionStrings(CParser.PrimaryExpressionStringsContext ctx) {
 		CComplexType signedInt = CComplexType.getSignedInt();
 		Expr<?> ret = signedInt.getUnitValue();
-		System.err.println("Warning: using int(1) as a string constant");
+		System.err.println("WARNING: using int(1) as a string constant");
 		FrontendMetadata.create(ret, "cType", signedInt);
 		return ret;
 	}

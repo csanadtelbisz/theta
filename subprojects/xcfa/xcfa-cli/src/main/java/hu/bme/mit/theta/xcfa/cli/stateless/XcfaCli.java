@@ -184,10 +184,6 @@ public class XcfaCli {
 	}
 
 	private void run() {
-		long beginTime = System.nanoTime();
-		long beginMillis = System.currentTimeMillis();
-		Stopwatch timer = Stopwatch.createStarted();
-
 		/// Checking flags
 		try {
 			JCommander.newBuilder().addObject(this).programName(JAR_NAME).build().parse(args);

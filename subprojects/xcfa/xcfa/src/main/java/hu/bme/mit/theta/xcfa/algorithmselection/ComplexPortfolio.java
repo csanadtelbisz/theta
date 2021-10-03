@@ -102,7 +102,7 @@ public class ComplexPortfolio extends AbstractPortfolio {
 		Tuple2<Result, Optional<SafetyResult<?, ?>>> result = executeConfiguration(configuration, cfa, calculateRemainingTime());
 		if(result.get1().equals(Result.SUCCESS)) {
 			checkState(result.get2().isPresent());
-			logger.write(Logger.Level.MAINSTEP, "Sequential portfolio successful, solver: " + configuration);
+			logger.write(Logger.Level.MAINSTEP, "Complex portfolio successful, solver: " + configuration);
 			logger.write(Logger.Level.MAINSTEP, System.lineSeparator());
 		}return result;
 	}
@@ -124,7 +124,7 @@ public class ComplexPortfolio extends AbstractPortfolio {
 		Tuple2<Result, Optional<SafetyResult<?, ?>>> result = executeConfiguration(configuration, cfa, calculateRemainingTime());
 		if(result.get1().equals(Result.SUCCESS)) {
 			checkState(result.get2().isPresent());
-			logger.write(Logger.Level.MAINSTEP, "Sequential portfolio successful, solver: " + configuration);
+			logger.write(Logger.Level.MAINSTEP, "Complex portfolio successful, solver: " + configuration);
 			logger.write(Logger.Level.MAINSTEP, System.lineSeparator());
 		}
 		return result;
@@ -147,7 +147,7 @@ public class ComplexPortfolio extends AbstractPortfolio {
 		Tuple2<Result, Optional<SafetyResult<?, ?>>> result = executeConfiguration(configuration, cfa, (long) (5.0 / 9.0 * calculateRemainingTime()));
 		if(result.get1().equals(Result.SUCCESS)) {
 			checkState(result.get2().isPresent());
-			logger.write(Logger.Level.MAINSTEP, "Sequential portfolio successful, solver: " + configuration);
+			logger.write(Logger.Level.MAINSTEP, "Complex portfolio successful, solver: " + configuration);
 			logger.write(Logger.Level.MAINSTEP, System.lineSeparator());
 		}
 		return result;
@@ -170,7 +170,7 @@ public class ComplexPortfolio extends AbstractPortfolio {
 		Tuple2<Result, Optional<SafetyResult<?, ?>>> result = executeConfiguration(configuration, cfa, (long) (400.0 / 900.0 * calculateRemainingTime()));
 		if(result.get1().equals(Result.SUCCESS)) {
 			checkState(result.get2().isPresent());
-			logger.write(Logger.Level.MAINSTEP, "Sequential portfolio successful, solver: " + configuration);
+			logger.write(Logger.Level.MAINSTEP, "Complex portfolio successful, solver: " + configuration);
 			logger.write(Logger.Level.MAINSTEP, System.lineSeparator());
 		}
 		return result;
@@ -194,7 +194,7 @@ public class ComplexPortfolio extends AbstractPortfolio {
 		Tuple2<Result, Optional<SafetyResult<?, ?>>> result = executeConfiguration(configuration, cfa, (long) (30.0 / 900.0 * calculateRemainingTime()));
 		if(result.get1().equals(Result.SUCCESS)) {
 			checkState(result.get2().isPresent());
-			logger.write(Logger.Level.MAINSTEP, "Sequential portfolio successful, solver: " + configuration);
+			logger.write(Logger.Level.MAINSTEP, "Complex portfolio successful, solver: " + configuration);
 			logger.write(Logger.Level.MAINSTEP, System.lineSeparator());
 		}
 		return result;
@@ -217,7 +217,7 @@ public class ComplexPortfolio extends AbstractPortfolio {
 		Tuple2<Result, Optional<SafetyResult<?, ?>>> result = executeConfiguration(bitvecConf1, cfa, calculateRemainingTime());
 		if(result.get1().equals(Result.SUCCESS)) {
 			checkState(result.get2().isPresent());
-			logger.write(Logger.Level.MAINSTEP, "Sequential portfolio successful, solver: " + bitvecConf1);
+			logger.write(Logger.Level.MAINSTEP, "Complex portfolio successful, solver: " + bitvecConf1);
 			logger.write(Logger.Level.MAINSTEP, System.lineSeparator());
 			return result.get2().get();
 		} else if(!result.get1().equals(Result.TIMEOUT)) {
@@ -237,7 +237,7 @@ public class ComplexPortfolio extends AbstractPortfolio {
 			result = executeConfiguration(bitvecConf2, cfa, calculateRemainingTime());
 			if(result.get1().equals(Result.SUCCESS)) {
 				checkState(result.get2().isPresent());
-				logger.write(Logger.Level.MAINSTEP, "Sequential portfolio successful, solver: " + bitvecConf2);
+				logger.write(Logger.Level.MAINSTEP, "Complex portfolio successful, solver: " + bitvecConf2);
 				logger.write(Logger.Level.MAINSTEP, System.lineSeparator());
 				return result.get2().get();
 			} else if(result.get1().equals(Result.TIMEOUT)) {

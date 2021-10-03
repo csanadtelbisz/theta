@@ -158,7 +158,7 @@ public class TypeVisitor extends CBaseVisitor<CSimpleType> {
 			}
 			return struct;
 		} else {
-			System.err.println("Warning: CompoundDefinitions are not yet implemented!");
+			System.err.println("WARNING: CompoundDefinitions are not yet implemented!");
 			return NamedType("int");
 		}
 	}

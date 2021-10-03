@@ -54,12 +54,9 @@ class CegarAnalysisThread extends Thread {
 				e.printStackTrace();
 			}
 		} catch (OutOfMemoryError E) {
-			System.err.println(System.lineSeparator());
-			System.err.println("Used memory before gc: " + (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()));
 			System.gc();
 			result = Result.OUTOFMEMORY;
 			safetyResult = null;
-			System.err.println("Used memory after gc: " + (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()));
 		}
 	}
 

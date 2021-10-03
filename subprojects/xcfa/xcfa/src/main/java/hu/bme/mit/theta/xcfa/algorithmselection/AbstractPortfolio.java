@@ -95,7 +95,7 @@ public abstract class AbstractPortfolio {
 					e.printStackTrace();
 				}
 			}
-			System.err.println("Timeouting thread dead after " + dieTimer.elapsed(TimeUnit.MILLISECONDS) + "ms");
+			logger.write(Logger.Level.MAINSTEP, "Timeouting thread dead after " + dieTimer.elapsed(TimeUnit.MILLISECONDS) + "ms");
 
 			cegarAnalysisThread.timeout(); // set the result to TIMEOUT and null
 			dieTimer.stop();
