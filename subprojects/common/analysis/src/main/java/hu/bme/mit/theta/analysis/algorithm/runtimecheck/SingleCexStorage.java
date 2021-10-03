@@ -14,11 +14,13 @@ import java.util.Set;
 import static com.google.common.base.Preconditions.checkState;
 
 /**
- * CexStorage to be used in configurations, where refinement starts after each counterexample discovered coutnerexample
+ * CexStorage to be used in configurations, where refinement starts after each counterexample discovered counterexample
  * e.g. not MULTI_SEQ refinement, but SEQ_ITP, UNSAT_CORE, etc.
  */
 public class SingleCexStorage<S extends State, A extends Action> extends CexStorage<S,A> {
-	private final Map<Integer, Set<Integer>> counterexamples = new LinkedHashMap<>();
+	private final Set<Integer> counterexamples = new LinkedHashSet<>();
+	private final Set<Integer> argprecs = new LinkedHashSet<>();
+//	private final Map<Integer, Set<Integer>> counterexamples = new LinkedHashMap<>();
 	private Integer currentArgHash = null;
 
 	<P extends Prec> void setCurrentArg(AbstractArg<S,A,P> arg) {
@@ -28,6 +30,9 @@ public class SingleCexStorage<S extends State, A extends Action> extends CexStor
 	void addCounterexample(ArgTrace<S,A> cex) {
 		checkState(currentArgHash!=null);
 		int cexHashCode = cex.hashCode();
+		counterexamples.add(cexHashCode);
+		argprecs.add(currentArgHash);
+		/*
 		if(counterexamples.containsKey(currentArgHash)) {
 			counterexamples.get(currentArgHash).add(cexHashCode);
 		} else {
@@ -35,16 +40,24 @@ public class SingleCexStorage<S extends State, A extends Action> extends CexStor
 			cexHashCodes.add(cexHashCode);
 			counterexamples.put(currentArgHash, cexHashCodes);
 		}
+		*/
 	}
 
 	boolean checkIfCounterexampleNew(ArgTrace<S,A> cex) {
 		checkState(currentArgHash!=null);
 		int cexHashCode = cex.hashCode();
+		if(argprecs.contains(currentArgHash)) {
+			if(counterexamples.contains(cexHashCode)) {
+				return false;
+			}
+		}
+		/*
 		if (counterexamples.containsKey(currentArgHash)) {
 			if (counterexamples.get(currentArgHash).contains(cexHashCode)) {
 				return false;
 			}
 		}
+		*/
 
 		return true;
 	}
