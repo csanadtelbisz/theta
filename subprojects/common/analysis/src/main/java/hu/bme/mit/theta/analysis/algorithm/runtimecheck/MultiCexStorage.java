@@ -11,6 +11,7 @@ import java.util.Set;
 
 import static com.google.common.base.Preconditions.checkState;
 
+// TODO refactor this class; it is buggy
 /**
  * CexStorage to be used in configurations, where refinement only starts after every counterexample has been discovered
  * (and the ARG has an empty waitlist)
