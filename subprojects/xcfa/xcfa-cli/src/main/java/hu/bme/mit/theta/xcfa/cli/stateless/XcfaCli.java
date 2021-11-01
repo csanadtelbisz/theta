@@ -260,11 +260,13 @@ public class XcfaCli {
 			return;
 		}
 
-		// portfolios and output-results uses these
 		File resultsDir = new File(model + "-" + LocalDateTime.now().toString() + "-results");
-		boolean bool = resultsDir.mkdir();
-		if(!bool){
-			throw new RuntimeException("Couldn't create results directory");
+		if(witnessOnly || outputResults || portfolio!=Portfolio.NONE) {
+			// portfolios and output-results use these
+			boolean bool = resultsDir.mkdir();
+			if(!bool){
+				throw new RuntimeException("Couldn't create results directory");
+			}
 		}
 		String basicFileName = resultsDir + "/" + model.getName();
 
@@ -408,6 +410,17 @@ public class XcfaCli {
 					throw new IllegalStateException("Unexpected value: " + portfolio);
 			}
 
+			if(status!=null && status.isUnsafe()) {
+				final Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction> trace = (Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction>) status.asUnsafe().getTrace();
+				// TODO experimental snippet START
+				SolverFactory legacyZ3Solver = SolverManager.resolveSolverFactory("Z3");
+				boolean traceFeasible = XcfaTraceChecker.isTraceFeasible(trace, legacyZ3Solver);
+				if(!traceFeasible) {
+					throw new Exception("Counterexample is not feasible, analysis inconclusive");
+				}
+				// TODO experimental snippet END
+			}
+
 			if (status!=null && status.isUnsafe() && witnessfile!=null) {
 				writeCex(status.asUnsafe(), refinementSolverFactory);
 				writeWitness(status.asUnsafe(), refinementSolverFactory);
@@ -516,6 +529,7 @@ public class XcfaCli {
 
 	private void writeCex(final SafetyResult.Unsafe<?, ?> status, SolverFactory concretizer) throws Exception {
 		@SuppressWarnings("unchecked") final Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction> trace = (Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction>) status.getTrace();
+
 		final Trace<XcfaDeclarativeState<ExplState>, XcfaDeclarativeAction> concrTrace = XcfaTraceConcretizer.concretize(trace, concretizer);
 
 		if(cexfile!=null) {
