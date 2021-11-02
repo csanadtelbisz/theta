@@ -413,7 +413,7 @@ public class XcfaCli {
 			if(status!=null && status.isUnsafe()) {
 				final Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction> trace = (Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction>) status.asUnsafe().getTrace();
 				// TODO experimental snippet START
-				SolverFactory legacyZ3Solver = SolverManager.resolveSolverFactory("Z3");
+				SolverFactory legacyZ3Solver = SolverManager.resolveSolverFactory("cvc4:1.8");
 				boolean traceFeasible = XcfaTraceChecker.isTraceFeasible(trace, legacyZ3Solver);
 				if(!traceFeasible) {
 					throw new Exception("Counterexample is not feasible, analysis inconclusive");
@@ -423,7 +423,7 @@ public class XcfaCli {
 
 			if (status!=null && status.isUnsafe() && witnessfile!=null) {
 				writeCex(status.asUnsafe(), refinementSolverFactory);
-				writeWitness(status.asUnsafe(), refinementSolverFactory);
+				// writeWitness(status.asUnsafe(), refinementSolverFactory);
 				// writeXcfaWithCex(xcfa, status.asUnsafe());
 			} else if(status!=null && status.isSafe() && witnessfile!=null) {
 				writeDummyCorrectnessWitness();

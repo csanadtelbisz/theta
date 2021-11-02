@@ -5,8 +5,10 @@ import hu.bme.mit.theta.analysis.Trace;
 import hu.bme.mit.theta.analysis.expl.ExplState;
 import hu.bme.mit.theta.analysis.expr.refinement.ExprTraceChecker;
 import hu.bme.mit.theta.analysis.expr.refinement.ExprTraceFwBinItpChecker;
+import hu.bme.mit.theta.analysis.expr.refinement.ExprTraceNoItpChecker;
 import hu.bme.mit.theta.analysis.expr.refinement.ExprTraceStatus;
 import hu.bme.mit.theta.analysis.expr.refinement.ItpRefutation;
+import hu.bme.mit.theta.analysis.expr.refinement.Refutation;
 import hu.bme.mit.theta.core.model.Valuation;
 import hu.bme.mit.theta.core.type.booltype.BoolExprs;
 import hu.bme.mit.theta.solver.SolverFactory;
@@ -32,9 +34,15 @@ public class XcfaTraceChecker {
 			sbeStates.add(trace.getState(i+1));
 		}
 		Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction> sbeTrace = Trace.of(sbeStates, sbeActions);
+		// TODO remove line
+		System.err.println(sbeTrace.toString());
+		/*
 		final ExprTraceChecker<ItpRefutation> checker = ExprTraceFwBinItpChecker.create(BoolExprs.True(),
 				BoolExprs.True(), solverFactory.createItpSolver());
-		final ExprTraceStatus<ItpRefutation> status = checker.check(sbeTrace);
+		 */
+		final ExprTraceChecker<Refutation> checker = ExprTraceNoItpChecker.create(BoolExprs.True(),
+				BoolExprs.True(), solverFactory.createSolver());
+		final ExprTraceStatus<Refutation> status = checker.check(sbeTrace);
 		if(status.isInfeasible()) {
 			return false;
 		} else {

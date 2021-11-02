@@ -35,6 +35,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+import static hu.bme.mit.theta.core.type.booltype.BoolExprs.True;
 
 /**
  * An ExprTraceChecker that generates a sequence interpolant by checking the
@@ -90,6 +92,9 @@ public final class ExprTraceSeqItpChecker implements ExprTraceChecker<ItpRefutat
 				final ImmutableList.Builder<Valuation> builder = ImmutableList.builder();
 				for (final VarIndexing indexing : indexings) {
 					builder.add(PathUtils.extractValuation(model, indexing));
+				}
+				for (Expr<BoolType> assertion : solver.getAssertions()) {
+					checkState(assertion.eval(model).equals(True()), "Solver problem: " + assertion);
 				}
 				return ExprTraceStatus.feasible(Trace.of(builder.build(), trace.getActions()));
 			} else {
