@@ -22,10 +22,8 @@ import static java.util.stream.Collectors.toList;
 
 import java.util.Collection;
 
-import hu.bme.mit.theta.analysis.algorithm.cegar.CegarChecker;
 import hu.bme.mit.theta.common.container.Containers;
 
-import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.stream.Stream;

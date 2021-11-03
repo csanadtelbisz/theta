@@ -75,6 +75,7 @@ public final class SingleExprTraceRefiner<S extends ExprState, A extends ExprAct
 
 		logger.write(Level.SUBSTEP, "|  |  Checking trace...");
 		final ExprTraceStatus<R> cexStatus = exprTraceChecker.check(traceToConcretize);
+
 		logger.write(Level.SUBSTEP, "done, result: %s%n", cexStatus);
 
 		assert cexStatus.isFeasible() || cexStatus.isInfeasible() : "Unknown CEX status";

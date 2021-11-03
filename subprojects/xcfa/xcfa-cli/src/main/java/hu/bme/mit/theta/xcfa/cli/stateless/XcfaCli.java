@@ -410,21 +410,29 @@ public class XcfaCli {
 					throw new IllegalStateException("Unexpected value: " + portfolio);
 			}
 
+			/*
 			if(status!=null && status.isUnsafe()) {
 				final Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction> trace = (Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction>) status.asUnsafe().getTrace();
 				// TODO experimental snippet START
-				SolverFactory legacyZ3Solver = SolverManager.resolveSolverFactory("cvc4:1.8");
+				SolverFactory legacyZ3Solver = SolverManager.resolveSolverFactory("Z3");
 				boolean traceFeasible = XcfaTraceChecker.isTraceFeasible(trace, legacyZ3Solver);
 				if(!traceFeasible) {
 					throw new Exception("Counterexample is not feasible, analysis inconclusive");
 				}
 				// TODO experimental snippet END
 			}
+			*/
 
-			if (status!=null && status.isUnsafe() && witnessfile!=null) {
-				writeCex(status.asUnsafe(), refinementSolverFactory);
-				// writeWitness(status.asUnsafe(), refinementSolverFactory);
-				// writeXcfaWithCex(xcfa, status.asUnsafe());
+			if (status!=null && status.isUnsafe()) {
+				if(cexfile!=null) {
+					writeCex(status.asUnsafe(), refinementSolverFactory);
+				}
+				if(witnessfile!=null) {
+					writeWitness(status.asUnsafe(), refinementSolverFactory);
+				}
+				if(highlightedxcfafile!=null) {
+					writeXcfaWithCex(xcfa, status.asUnsafe());
+				}
 			} else if(status!=null && status.isSafe() && witnessfile!=null) {
 				writeDummyCorrectnessWitness();
 			}
@@ -528,11 +536,11 @@ public class XcfaCli {
 	}
 
 	private void writeCex(final SafetyResult.Unsafe<?, ?> status, SolverFactory concretizer) throws Exception {
-		@SuppressWarnings("unchecked") final Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction> trace = (Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction>) status.getTrace();
-
-		final Trace<XcfaDeclarativeState<ExplState>, XcfaDeclarativeAction> concrTrace = XcfaTraceConcretizer.concretize(trace, concretizer);
-
 		if(cexfile!=null) {
+			@SuppressWarnings("unchecked") final Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction> trace = (Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction>) status.getTrace();
+
+			final Trace<XcfaDeclarativeState<ExplState>, XcfaDeclarativeAction> concrTrace = XcfaTraceConcretizer.concretize(trace, concretizer);
+
 			final File file = cexfile;
 			PrintWriter printWriter = null;
 			try {
@@ -547,7 +555,7 @@ public class XcfaCli {
 	}
 
 	private void writeWitness(final SafetyResult.Unsafe<?, ?> status, SolverFactory concretizer) throws Exception {
-		@SuppressWarnings("unchecked") final Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction> trace = (Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction>) status.getTrace();
+		final Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction> trace = (Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction>) status.getTrace();
 		final Trace<XcfaDeclarativeState<ExplState>, XcfaDeclarativeAction> concrTrace = XcfaTraceConcretizer.concretize(trace, concretizer);
 
 		Graph witnessGraph = XcfaTraceToWitness.buildWitness(concrTrace);

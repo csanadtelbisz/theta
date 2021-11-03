@@ -24,25 +24,13 @@ import static com.google.common.base.Preconditions.checkArgument;
 public class XcfaTraceChecker {
 	public static boolean isTraceFeasible(
 			final Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction> trace, SolverFactory solverFactory) {
-		List<XcfaDeclarativeState<?>> sbeStates = new ArrayList<>();
-		List<XcfaDeclarativeAction> sbeActions = new ArrayList<>();
-
-		sbeStates.add(trace.getState(0));
-		for (int i = 0; i < trace.getActions().size(); ++i) {
-			final XcfaEdge edge = XcfaEdge.of(trace.getAction(i).getSource(), trace.getAction(i).getTarget(), trace.getAction(i).getLabels());
-			sbeActions.add(XcfaDeclarativeAction.create(edge));
-			sbeStates.add(trace.getState(i+1));
-		}
-		Trace<XcfaDeclarativeState<?>, XcfaDeclarativeAction> sbeTrace = Trace.of(sbeStates, sbeActions);
-		// TODO remove line
-		System.err.println(sbeTrace.toString());
 		/*
 		final ExprTraceChecker<ItpRefutation> checker = ExprTraceFwBinItpChecker.create(BoolExprs.True(),
 				BoolExprs.True(), solverFactory.createItpSolver());
 		 */
 		final ExprTraceChecker<Refutation> checker = ExprTraceNoItpChecker.create(BoolExprs.True(),
 				BoolExprs.True(), solverFactory.createSolver());
-		final ExprTraceStatus<Refutation> status = checker.check(sbeTrace);
+		final ExprTraceStatus<Refutation> status = checker.check(trace);
 		if(status.isInfeasible()) {
 			return false;
 		} else {

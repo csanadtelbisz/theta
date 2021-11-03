@@ -1,0 +1,311 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<key attr.name="sourcecodelang" attr.type="string" for="graph" id="sourcecodelang"/>
+<key attr.name="creationtime" attr.type="string" for="graph" id="creationtime"/>
+<key attr.name="witness-type" attr.type="string" for="graph" id="witness-type"/>
+<key attr.name="producer" attr.type="string" for="graph" id="producer"/>
+<key attr.name="architecture" attr.type="string" for="graph" id="architecture"/>
+<key attr.name="programHash" attr.type="string" for="graph" id="programhash"/>
+<key attr.name="programfile" attr.type="string" for="graph" id="programfile"/>
+<key attr.name="specification" attr.type="string" for="graph" id="specification"/>
+<key attr.name="startline" attr.type="string" for="edge" id="startline"/>
+<key attr.name="endline" attr.type="string" for="edge" id="endline"/>
+<key attr.name="startoffset" attr.type="string" for="edge" id="startoffset"/>
+<key attr.name="assumption" attr.type="string" for="edge" id="assumption"/>
+<key attr.name="control" attr.type="string" for="edge" id="control"/>
+<key attr.name="stmt" attr.type="string" for="edge" id="stmt"/>
+<key attr.name="expl-state" attr.type="string" for="node" id="expl-state"/>
+<key attr.name="entry" attr.type="string" for="node" id="entry">
+	<default>false</default>
+
+</key>
+<key attr.name="violation" attr.type="string" for="node" id="violation">
+	<default>false</default>
+
+</key>
+<graph edgedefault="directed">
+<data key="witness-type">violation_witness</data>
+<data key="producer">theta</data>
+<data key="sourcecodelang">C</data>
+<data key="specification">CHECK( init(main()), LTL(G ! call(reach_error())) )</data>
+<data key="programfile">/home/solarowl/Research/sv-benchmarks/c/locks/test_locks_14-2.c</data>
+<data key="programhash">75f53c568c86c59ddc62d2fd150ff0a5ed9b51ea17cada3ff1a95dec57d9167c</data>
+<data key="architecture">32bit</data>
+<data key="creationtime">2021-11-03T22:43:21Z</data>
+<node id="N0">
+<data key="entry">true</data>
+
+</node>
+<node id="N1"/>
+<node id="N2"/>
+<node id="N3"/>
+<node id="N4"/>
+<node id="N5"/>
+<node id="N6"/>
+<node id="N7"/>
+<node id="N8"/>
+<node id="N9"/>
+<node id="N10"/>
+<node id="N11"/>
+<node id="N12"/>
+<node id="N13"/>
+<node id="N14"/>
+<node id="N15"/>
+<node id="N16"/>
+<node id="N17"/>
+<node id="N18"/>
+<node id="N19"/>
+<node id="N20"/>
+<node id="N21"/>
+<node id="N22"/>
+<node id="N23"/>
+<node id="N24"/>
+<node id="N25"/>
+<node id="N26"/>
+<node id="N27"/>
+<node id="N28"/>
+<node id="N29"/>
+<node id="N30"/>
+<node id="N31"/>
+<node id="N32"/>
+<node id="N33"/>
+<node id="N34">
+<data key="violation">true</data>
+
+</node>
+<edge source="N0" target="N1">
+<data key="startline">8</data>
+<data key="endline">8</data>
+<data key="startoffset">325</data>
+<data key="assumption">call___VERIFIER_nondet_int_ret1 == 0;</data>
+<data key="stmt">(havoc call___VERIFIER_nondet_int_ret1)</data>
+</edge>
+<edge source="N1" target="N2">
+<data key="startline">11</data>
+<data key="endline">11</data>
+<data key="startoffset">417</data>
+<data key="assumption">call___VERIFIER_nondet_int_ret2 == 0;</data>
+<data key="stmt">(havoc call___VERIFIER_nondet_int_ret2)</data>
+</edge>
+<edge source="N2" target="N3">
+<data key="startline">14</data>
+<data key="endline">14</data>
+<data key="startoffset">509</data>
+<data key="assumption">call___VERIFIER_nondet_int_ret3 == -1;</data>
+<data key="stmt">(havoc call___VERIFIER_nondet_int_ret3)</data>
+</edge>
+<edge source="N3" target="N4">
+<data key="startline">17</data>
+<data key="endline">17</data>
+<data key="startoffset">601</data>
+<data key="assumption">call___VERIFIER_nondet_int_ret4 == 0;</data>
+<data key="stmt">(havoc call___VERIFIER_nondet_int_ret4)</data>
+</edge>
+<edge source="N4" target="N5">
+<data key="startline">20</data>
+<data key="endline">20</data>
+<data key="startoffset">693</data>
+<data key="assumption">call___VERIFIER_nondet_int_ret5 == -1;</data>
+<data key="stmt">(havoc call___VERIFIER_nondet_int_ret5)</data>
+</edge>
+<edge source="N5" target="N6">
+<data key="startline">23</data>
+<data key="endline">23</data>
+<data key="startoffset">785</data>
+<data key="assumption">call___VERIFIER_nondet_int_ret6 == -1;</data>
+<data key="stmt">(havoc call___VERIFIER_nondet_int_ret6)</data>
+</edge>
+<edge source="N6" target="N7">
+<data key="startline">26</data>
+<data key="endline">26</data>
+<data key="startoffset">877</data>
+<data key="assumption">call___VERIFIER_nondet_int_ret7 == 1;</data>
+<data key="stmt">(havoc call___VERIFIER_nondet_int_ret7)</data>
+</edge>
+<edge source="N7" target="N8">
+<data key="startline">29</data>
+<data key="endline">29</data>
+<data key="startoffset">969</data>
+<data key="assumption">call___VERIFIER_nondet_int_ret8 == 1;</data>
+<data key="stmt">(havoc call___VERIFIER_nondet_int_ret8)</data>
+</edge>
+<edge source="N8" target="N9">
+<data key="startline">32</data>
+<data key="endline">32</data>
+<data key="startoffset">1061</data>
+<data key="assumption">call___VERIFIER_nondet_int_ret9 == 1;</data>
+<data key="stmt">(havoc call___VERIFIER_nondet_int_ret9)</data>
+</edge>
+<edge source="N9" target="N10">
+<data key="startline">35</data>
+<data key="endline">35</data>
+<data key="startoffset">1154</data>
+<data key="assumption">call___VERIFIER_nondet_int_ret10 == 1;</data>
+<data key="stmt">(havoc call___VERIFIER_nondet_int_ret10)</data>
+</edge>
+<edge source="N10" target="N11">
+<data key="startline">38</data>
+<data key="endline">38</data>
+<data key="startoffset">1248</data>
+<data key="assumption">call___VERIFIER_nondet_int_ret11 == -1;</data>
+<data key="stmt">(havoc call___VERIFIER_nondet_int_ret11)</data>
+</edge>
+<edge source="N11" target="N12">
+<data key="startline">41</data>
+<data key="endline">41</data>
+<data key="startoffset">1342</data>
+<data key="assumption">call___VERIFIER_nondet_int_ret12 == -1;</data>
+<data key="stmt">(havoc call___VERIFIER_nondet_int_ret12)</data>
+</edge>
+<edge source="N12" target="N13">
+<data key="startline">44</data>
+<data key="endline">44</data>
+<data key="startoffset">1436</data>
+<data key="assumption">call___VERIFIER_nondet_int_ret13 == -1;</data>
+<data key="stmt">(havoc call___VERIFIER_nondet_int_ret13)</data>
+</edge>
+<edge source="N13" target="N14">
+<data key="startline">47</data>
+<data key="endline">47</data>
+<data key="startoffset">1530</data>
+<data key="assumption">call___VERIFIER_nondet_int_ret14 == -1;</data>
+<data key="stmt">(havoc call___VERIFIER_nondet_int_ret14)</data>
+</edge>
+<edge source="N14" target="N15">
+<data key="startline">53</data>
+<data key="endline">53</data>
+<data key="startoffset">1636</data>
+<data key="control">condition-true</data>
+<data key="stmt">(assume (/= 1 0))</data>
+</edge>
+<edge source="N15" target="N16">
+<data key="startline">54</data>
+<data key="endline">54</data>
+<data key="startoffset">1656</data>
+<data key="assumption">call___VERIFIER_nondet_int_ret15 == 1;</data>
+<data key="stmt">(havoc call___VERIFIER_nondet_int_ret15)</data>
+</edge>
+<edge source="N16" target="N17">
+<data key="startline">55</data>
+<data key="endline">55</data>
+<data key="startoffset">1693</data>
+<data key="control">condition-false</data>
+<data key="stmt">(assume (= (ite (= (+ cond) (+ 0)) 1 0) 0))</data>
+</edge>
+<edge source="N17" target="N18">
+<data key="startline">88</data>
+<data key="endline">88</data>
+<data key="startoffset">2398</data>
+<data key="control">condition-false</data>
+<data key="stmt">(assume (= (ite (/= (+ p1) (+ 0)) 1 0) 0))</data>
+</edge>
+<edge source="N18" target="N19">
+<data key="startline">92</data>
+<data key="endline">92</data>
+<data key="startoffset">2477</data>
+<data key="control">condition-false</data>
+<data key="stmt">(assume (= (ite (/= (+ p2) (+ 0)) 1 0) 0))</data>
+</edge>
+<edge source="N19" target="N20">
+<data key="startline">96</data>
+<data key="endline">96</data>
+<data key="startoffset">2556</data>
+<data key="control">condition-true</data>
+<data key="stmt">(assume (/= (ite (/= (+ p3) (+ 0)) 1 0) 0))</data>
+</edge>
+<edge source="N20" target="N21">
+<data key="startline">100</data>
+<data key="endline">100</data>
+<data key="startoffset">2635</data>
+<data key="control">condition-false</data>
+<data key="stmt">(assume (= (ite (/= (+ p4) (+ 0)) 1 0) 0))</data>
+</edge>
+<edge source="N21" target="N22">
+<data key="startline">104</data>
+<data key="endline">104</data>
+<data key="startoffset">2714</data>
+<data key="control">condition-true</data>
+<data key="stmt">(assume (/= (ite (/= (+ p5) (+ 0)) 1 0) 0))</data>
+</edge>
+<edge source="N22" target="N23">
+<data key="startline">108</data>
+<data key="endline">108</data>
+<data key="startoffset">2793</data>
+<data key="control">condition-true</data>
+<data key="stmt">(assume (/= (ite (/= (+ p6) (+ 0)) 1 0) 0))</data>
+</edge>
+<edge source="N23" target="N24">
+<data key="startline">112</data>
+<data key="endline">112</data>
+<data key="startoffset">2872</data>
+<data key="control">condition-true</data>
+<data key="stmt">(assume (/= (ite (/= (+ p7) (+ 0)) 1 0) 0))</data>
+</edge>
+<edge source="N24" target="N25">
+<data key="startline">116</data>
+<data key="endline">116</data>
+<data key="startoffset">2951</data>
+<data key="control">condition-true</data>
+<data key="stmt">(assume (/= (ite (/= (+ p8) (+ 0)) 1 0) 0))</data>
+</edge>
+<edge source="N25" target="N26">
+<data key="startline">120</data>
+<data key="endline">120</data>
+<data key="startoffset">3030</data>
+<data key="control">condition-true</data>
+<data key="stmt">(assume (/= (ite (/= (+ p9) (+ 0)) 1 0) 0))</data>
+</edge>
+<edge source="N26" target="N27">
+<data key="startline">124</data>
+<data key="endline">124</data>
+<data key="startoffset">3109</data>
+<data key="control">condition-true</data>
+<data key="stmt">(assume (/= (ite (/= (+ p10) (+ 0)) 1 0) 0))</data>
+</edge>
+<edge source="N27" target="N28">
+<data key="startline">128</data>
+<data key="endline">128</data>
+<data key="startoffset">3190</data>
+<data key="control">condition-true</data>
+<data key="stmt">(assume (/= (ite (/= (+ p11) (+ 0)) 1 0) 0))</data>
+</edge>
+<edge source="N28" target="N29">
+<data key="startline">132</data>
+<data key="endline">132</data>
+<data key="startoffset">3271</data>
+<data key="control">condition-true</data>
+<data key="stmt">(assume (/= (ite (/= (+ p12) (+ 0)) 1 0) 0))</data>
+</edge>
+<edge source="N29" target="N30">
+<data key="startline">136</data>
+<data key="endline">136</data>
+<data key="startoffset">3352</data>
+<data key="control">condition-true</data>
+<data key="stmt">(assume (/= (ite (/= (+ p13) (+ 0)) 1 0) 0))</data>
+</edge>
+<edge source="N30" target="N31">
+<data key="startline">140</data>
+<data key="endline">140</data>
+<data key="startoffset">3433</data>
+<data key="control">condition-true</data>
+<data key="stmt">(assume (/= (ite (/= (+ p14) (+ 0)) 1 0) 0))</data>
+</edge>
+<edge source="N31" target="N32">
+<data key="startline">146</data>
+<data key="endline">146</data>
+<data key="startoffset">3535</data>
+<data key="control">condition-false</data>
+<data key="stmt">(assume (= (ite (/= (+ p1) (+ 0)) 1 0) 0))</data>
+</edge>
+<edge source="N32" target="N33">
+<data key="startline">151</data>
+<data key="endline">151</data>
+<data key="startoffset">3657</data>
+<data key="control">condition-false</data>
+<data key="stmt">(assume (= (ite (/= (+ p2) (+ 0)) 1 0) 0))</data>
+</edge>
+<edge source="N33" target="N34">
+
+</edge>
+ </graph>
+</graphml>
