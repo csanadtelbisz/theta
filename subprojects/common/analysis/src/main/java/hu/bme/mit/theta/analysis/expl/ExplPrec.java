@@ -27,6 +27,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -112,5 +113,10 @@ public final class ExplPrec implements Prec {
 	@Override
 	public Collection<VarDecl<?>> getUsedVars() {
 		return vars;
+	}
+
+	@Override
+	public Collection<Collection<VarDecl<?>>> getUsedVarsByPrecItem() {
+		return vars.stream().map(Set::<VarDecl<?>>of).collect(Collectors.toSet());
 	}
 }

@@ -7,7 +7,6 @@ import hu.bme.mit.theta.analysis.State
 import hu.bme.mit.theta.analysis.algorithm.ArgNode
 import hu.bme.mit.theta.analysis.expr.ExprState
 import hu.bme.mit.theta.analysis.waitlist.Waitlist
-import hu.bme.mit.theta.core.decl.VarDecl
 import hu.bme.mit.theta.xcfa.analysis.XcfaAction
 import hu.bme.mit.theta.xcfa.analysis.XcfaState
 import hu.bme.mit.theta.xcfa.analysis.getXcfaLts
@@ -65,7 +64,6 @@ var State.explored: MutableSet<A> by extension() // TODO private
 
 private val reExploredDelegate = nullableExtension<State, Boolean?>()
 private var State.reExplored: Boolean? by reExploredDelegate
-private var A.varLookUp: Map<VarDecl<*>, VarDecl<*>> by extension()
 
 private val Node.explored: Set<A> get() = outEdges.map { it.action }.collect(Collectors.toSet())
 
@@ -85,12 +83,7 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
 
         private val simpleXcfaLts = getXcfaLts()
 
-        private val State.enabled: Set<A>
-            get() {
-                val enabledActions = simpleXcfaLts.getEnabledActionsFor(this as S)
-                enabledActions.forEach { it.varLookUp = this.processes[it.pid]!!.varLookup.peek() }
-                return enabledActions
-            }
+        private val State.enabled: Set<A> get() = simpleXcfaLts.getEnabledActionsFor(this as S)
 
         fun <E : ExprState> getPartialOrder(partialOrd: PartialOrd<E>) =
             PartialOrd<E> { s1, s2 ->
@@ -210,7 +203,6 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
 
             val newaction = item.inEdge.get().action
             val process = newaction.pid
-            newaction.varLookUp = item.parent.get().state.processes[process]!!.varLookup.peek()
 
             val newProcessLastAction = LinkedHashMap(last.processLastAction).apply { this[process] = stack.size }
             var newLastDependents: MutableMap<Int, Int> = LinkedHashMap(last.lastDependents[process] ?: mapOf()).apply {
@@ -408,17 +400,21 @@ class XcfaAadporLts(private val xcfa: XCFA) : XcfaDporLts(xcfa) {
     override fun dependent(a: A, b: A): Boolean {
         if (a.pid == b.pid) return true
 
-        val precVars = prec.usedVars.flatMap { precVar ->
-            buildList<VarDecl<*>> {
-                add(precVar)
-                a.varLookUp[precVar]?.let { add(it) }
-                b.varLookUp[precVar]?.let { add(it) }
-            }
-        }.toSet()
-        val aGlobalVars = a.edge.getGlobalVars(xcfa, precVars)
-        val bGlobalVars = b.edge.getGlobalVars(xcfa, precVars)
-        // dependent if they access the same variable in the precision (at least one write)
-        return (aGlobalVars.keys intersect bGlobalVars.keys intersect precVars)
+        val aGlobalVars = a.edge.getGlobalVars(xcfa)
+        val bGlobalVars = b.edge.getGlobalVars(xcfa)
+
+        val depSyntactic = (aGlobalVars.keys intersect bGlobalVars.keys)
             .any { aGlobalVars[it].isWritten || bGlobalVars[it].isWritten }
+
+        if(!depSyntactic) return false
+
+        val depAbstraction = prec.usedVarsByPrecItem.map { it.toSet() }.any { precItemVars ->
+            val aPrecItemVars = (aGlobalVars.keys intersect precItemVars)
+            val bPrecItemVars = (bGlobalVars.keys intersect precItemVars)
+            aPrecItemVars.isNotEmpty() && bPrecItemVars.isNotEmpty() && (aPrecItemVars union bPrecItemVars)
+                .any { aGlobalVars[it].isWritten || bGlobalVars[it].isWritten }
+        }
+
+        return depAbstraction
     }
 }
