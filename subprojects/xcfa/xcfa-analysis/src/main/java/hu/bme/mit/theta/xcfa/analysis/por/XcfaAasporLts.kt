@@ -23,10 +23,8 @@ import hu.bme.mit.theta.xcfa.analysis.XcfaAction
 import hu.bme.mit.theta.xcfa.analysis.XcfaState
 import hu.bme.mit.theta.xcfa.model.XCFA
 
-class XcfaAasporLts(
-    xcfa: XCFA,
-    private val ignoredVariableRegistry: MutableMap<Decl<out Type>, MutableSet<ExprState>>
-) : XcfaSporLts(xcfa) {
+class XcfaAasporLts(xcfa: XCFA, private val ignoredVarRegistry: MutableMap<Decl<out Type>, MutableSet<ExprState>>) :
+    XcfaSporLts(xcfa) {
 
     override fun <P : Prec> getEnabledActionsFor(
         state: XcfaState<*>,
@@ -44,23 +42,23 @@ class XcfaAasporLts(
         } else {
             setOf(exploredActions)
         }
-        var finalIgnoredVariables = setOf<Decl<out Type>>()
+        var finalIgnoredVars = setOf<Decl<out Type>>()
 
         // Calculate persistent sets from all possible starting action set
         for (firstActions in persistentSetFirstActions) {
             // Variables that have been ignored (if they would be in the precision, more actions have had to be added to the persistent set)
-            val ignoredVariables = mutableSetOf<Decl<out Type>>()
-            val persistentSet = calculatePersistentSet(allEnabledActions, firstActions, prec, ignoredVariables)
+            val ignoredVars = mutableSetOf<Decl<out Type>>()
+            val persistentSet = calculatePersistentSet(allEnabledActions, firstActions, prec, ignoredVars)
             if (minimalPersistentSet.isEmpty() || persistentSet.size < minimalPersistentSet.size) {
                 minimalPersistentSet = persistentSet.toMutableSet()
-                finalIgnoredVariables = ignoredVariables
+                finalIgnoredVars = ignoredVars
             }
         }
-        finalIgnoredVariables.forEach { ignoredVariable ->
-            if (!ignoredVariableRegistry.containsKey(ignoredVariable)) {
-                ignoredVariableRegistry[ignoredVariable] = mutableSetOf()
+        finalIgnoredVars.forEach { ignoredVar ->
+            if (!ignoredVarRegistry.containsKey(ignoredVar)) {
+                ignoredVarRegistry[ignoredVar] = mutableSetOf()
             }
-            ignoredVariableRegistry[ignoredVariable]!!.add(state)
+            ignoredVarRegistry[ignoredVar]!!.add(state)
         }
         minimalPersistentSet.removeAll(exploredActions.toSet())
         return minimalPersistentSet
@@ -72,10 +70,10 @@ class XcfaAasporLts(
      * @param enabledActions the enabled actions in the present state
      * @param firstActions the actions that will be added to the persistent set as the first actions
      * @param prec the precision of the current abstraction
-     * @param ignoredVariables variables that have been ignored (if they would be in the precision, more actions have had to be added to the persistent set)
+     * @param ignoredVars variables that have been ignored (if they would be in the precision, more actions have had to be added to the persistent set)
      * @return a persistent set of enabled actions in the current abstraction
      */
-    private fun calculatePersistentSet(enabledActions: Collection<XcfaAction>, firstActions: Collection<XcfaAction>, prec: Prec, ignoredVariables: MutableSet<Decl<out Type>>): Set<XcfaAction> {
+    private fun calculatePersistentSet(enabledActions: Collection<XcfaAction>, firstActions: Collection<XcfaAction>, prec: Prec, ignoredVars: MutableSet<Decl<out Type>>): Set<XcfaAction> {
         if (firstActions.any(this::isBackwardAction)) {
             return enabledActions.toSet()
         }
@@ -83,7 +81,7 @@ class XcfaAasporLts(
         val persistentSet = firstActions.toMutableSet()
         val otherActions = enabledActions.toMutableSet() // actions not in the persistent set
         firstActions.forEach(otherActions::remove)
-        val ignoredVariablesByAction = otherActions.associateWith { mutableSetOf<Decl<out Type>>() }
+        val ignoredVarsByAction = otherActions.associateWith { mutableSetOf<Decl<out Type>>() }
 
         var addedNewAction = true
         while (addedNewAction) {
@@ -92,9 +90,9 @@ class XcfaAasporLts(
             for (action in otherActions) {
                 // for every action that is not in the persistent set it is checked whether it should be added to the persistent set
                 // (because it is dependent with an action already in the persistent set)
-                val potentialIgnoredVariables = mutableSetOf<Decl<out Type>>()
+                val potentialIgnoredVars = mutableSetOf<Decl<out Type>>()
                 if (persistentSet.any { persistentSetAction ->
-                        areDependents(persistentSetAction, action, prec, potentialIgnoredVariables)
+                        areDependents(persistentSetAction, action, prec, potentialIgnoredVars)
                     }) {
                     if (isBackwardAction(action)) {
                         return enabledActions.toSet() // see POR algorithm for the reason of removing backward transitions
@@ -103,32 +101,38 @@ class XcfaAasporLts(
                     actionsToRemove.add(action)
                     addedNewAction = true
                 } else {
-                    ignoredVariablesByAction[action]!!.addAll(potentialIgnoredVariables) // the action is not added to the persistent set because we ignore variables in potentialIgnoredVariables
+                    ignoredVarsByAction[action]!!.addAll(potentialIgnoredVars) // the action is not added to the persistent set because we ignore variables in potentialIgnoredVars
                 }
             }
             actionsToRemove.forEach(otherActions::remove)
         }
-        otherActions.forEach { action -> ignoredVariables.addAll(ignoredVariablesByAction[action]!!) }
+        otherActions.forEach { action -> ignoredVars.addAll(ignoredVarsByAction[action]!!) }
         return persistentSet
     }
 
-    private fun isIgnorable(varDecl: Decl<out Type>, prec: Prec) = varDecl !in prec.usedVars
-
-    private fun areDependents(persistentSetAction: XcfaAction, action: XcfaAction, prec: Prec, ignoredVariables: MutableSet<Decl<out Type>>): Boolean {
+    private fun areDependents(persistentSetAction: XcfaAction, action: XcfaAction, prec: Prec, ignoredVars: MutableSet<Decl<out Type>>): Boolean {
         if (isSameProcess(persistentSetAction, action)) {
             return true
         }
 
         val usedByPersistentSetAction = getCachedUsedSharedObjects(getTransitionOf(persistentSetAction))
         val influencedSharedObjects = getInfluencedSharedObjects(getTransitionOf(action))
-        for (varDecl in influencedSharedObjects) {
-            if (usedByPersistentSetAction.contains(varDecl)) {
-                if (isIgnorable(varDecl, prec)) {
-                    // the actions would be dependent, but we may have a chance to ignore it in the current abstraction
-                    ignoredVariables.add(varDecl)
-                    continue
+
+        for (varSet in influencedSharedObjects) {
+            val depAbstraction = prec.usedVarsByPrecItem.map { it.toSet() }.any { precItemVars ->
+                val persistentSetActionPrecItemVars = (usedByPersistentSetAction intersect precItemVars)
+                val varSetPrecItemVars = (varSet intersect precItemVars)
+                persistentSetActionPrecItemVars.isNotEmpty() && varSetPrecItemVars.isNotEmpty()
+            }
+
+            val syntacticIntersection = varSet intersect usedByPersistentSetAction
+
+            if(syntacticIntersection.isNotEmpty()) {
+                if(depAbstraction) {
+                    return true
+                } else {
+                    ignoredVars.addAll(syntacticIntersection)
                 }
-                return true
             }
         }
         return false

@@ -19,13 +19,10 @@ import hu.bme.mit.theta.analysis.algorithm.PorLts
 import hu.bme.mit.theta.core.decl.Decl
 import hu.bme.mit.theta.core.decl.VarDecl
 import hu.bme.mit.theta.core.type.Type
+import hu.bme.mit.theta.xcfa.*
 import hu.bme.mit.theta.xcfa.analysis.XcfaAction
 import hu.bme.mit.theta.xcfa.analysis.XcfaState
 import hu.bme.mit.theta.xcfa.analysis.getXcfaLts
-import hu.bme.mit.theta.xcfa.collectVars
-import hu.bme.mit.theta.xcfa.getFlatLabels
-import hu.bme.mit.theta.xcfa.isAtomicBegin
-import hu.bme.mit.theta.xcfa.isAtomicEnd
 import hu.bme.mit.theta.xcfa.model.*
 import java.util.*
 import kotlin.random.Random
@@ -87,7 +84,7 @@ open class XcfaSporLts(private val xcfa: XCFA) : PorLts<XcfaState<*>, XcfaAction
      */
     override fun getUsedSharedObjects(edge: XcfaEdge): Set<Decl<out Type?>?> =
         if (edge.getFlatLabels().any(XcfaLabel::isAtomicBegin)) {
-            getSharedObjectsWithBFS(edge) { it.getFlatLabels().none(XcfaLabel::isAtomicEnd) }
+            getSharedObjectsWithBFS(edge) { it.getFlatLabels().none(XcfaLabel::isAtomicEnd) }.flatten().toSet()
         } else {
             getDirectlyUsedSharedObjects(edge)
         }
@@ -95,7 +92,7 @@ open class XcfaSporLts(private val xcfa: XCFA) : PorLts<XcfaState<*>, XcfaAction
     /**
      * Collects backward edges of the given XCFA.
      */
-    final override fun collectBackwardTransitions() {
+    private fun collectBackwardTransitions() {
         for (procedure in xcfa.procedures) {
             // DFS for every procedure of the XCFA to discover backward edges
             val visitedLocations = mutableSetOf<XcfaLocation>()
