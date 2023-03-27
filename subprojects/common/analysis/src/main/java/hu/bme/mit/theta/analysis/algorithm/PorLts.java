@@ -144,19 +144,19 @@ public abstract class PorLts<S extends State, A extends Action, T> implements LT
 	 * @return true, if the two actions are dependent in the context of persistent sets
 	 */
 	protected boolean areDependents(A persistentSetAction, A action) {
-		return canEnOrDisableEachOther(persistentSetAction, action) ||
+		return isSameProcess(persistentSetAction, action) ||
 				getInfluencedSharedObjects(getTransitionOf(action)).stream().anyMatch(varDecl ->
 						getCachedUsedSharedObjects(getTransitionOf(persistentSetAction)).contains(varDecl));
 	}
 
 	/**
-	 * Determines whether two actions can enable or disable each other (if true, the two actions are dependent).
+	 * Determines whether two actions are in the same process.
 	 *
 	 * @param action1 action 1
 	 * @param action2 action 2
-	 * @return true, if the two actions can enable or disable each other
+	 * @return true, if the two actions are in the same process
 	 */
-	protected abstract boolean canEnOrDisableEachOther(A action1, A action2);
+	protected abstract boolean isSameProcess(A action1, A action2);
 
 	/**
 	 * Determines whether the given action is a backward action.
