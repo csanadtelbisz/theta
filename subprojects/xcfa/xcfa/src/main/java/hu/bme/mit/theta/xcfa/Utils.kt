@@ -55,30 +55,102 @@ fun XcfaLabel.collectVars(): Iterable<VarDecl<*>> = when(this) {
     else -> emptySet()
 }
 
+
+typealias AccessType = Pair<Boolean, Boolean>
+val AccessType?.isRead get() = this?.first == true
+val AccessType?.isWritten get() = this?.second == true
+fun AccessType?.merge(other: AccessType?) =
+    Pair(this?.first == true || other?.first == true, this?.second == true || other?.second == true)
+val WRITE: AccessType get() = Pair(false, true)
+val READ: AccessType get() = Pair(true, false)
+
+private typealias VarAccessMap = Map<VarDecl<*>, AccessType>
+private fun List<VarAccessMap>.mergeAndCollect(): VarAccessMap = this.fold(mapOf()) { acc, next ->
+    (acc.keys + next.keys).associateWith { acc[it].merge(next[it]) }
+}
+
+private fun extendRelevantVars(relevantVars: Set<VarDecl<*>>?, labels: Collection<XcfaLabel>): Set<VarDecl<*>>? =
+    relevantVars?.toMutableSet()?.apply {
+        val accesses = labels.map { it.collectVarsWithAccessType(null) }.mergeAndCollect()
+        addAll(accesses.filter { it.value.isWritten && it.value.isRead }.keys)
+    }
+
 /**
  * Returns the list of accessed variables by the label.
  * The variable is associated with true if the variable is written and false otherwise.
  */
-fun XcfaLabel.collectVarsWithAccessType(): Map<VarDecl<*>, Boolean> = when(this) {
+private fun XcfaLabel.collectVarsWithAccessType(relevantVars: Set<VarDecl<*>>?): VarAccessMap = when(this) {
     is StmtLabel -> {
         when(stmt) {
-            is HavocStmt<*> -> mapOf(stmt.varDecl to true)
-            is AssignStmt<*> -> StmtUtils.getVars(stmt).associateWith { false } + mapOf(stmt.varDecl to true)
-            else -> StmtUtils.getVars(stmt).associateWith { false }
+            is HavocStmt<*> -> if(relevantVars?.let { stmt.varDecl in it} != false) mapOf(stmt.varDecl to WRITE) else mapOf()
+            is AssignStmt<*> -> if(relevantVars?.let { stmt.varDecl in it} != false)
+                                    StmtUtils.getVars(stmt).associateWith { READ } + mapOf(stmt.varDecl to WRITE)
+                                else
+                                    mapOf()
+            else -> StmtUtils.getVars(stmt).associateWith { READ }
         }
     }
-    is NondetLabel -> labels.map { it.collectVarsWithAccessType() }.fold(mapOf()) { acc, next ->
-        (acc.keys + next.keys).associateWith { acc[it]==true || next[it]==true }
+    is NondetLabel -> {
+        labels.map { it.collectVarsWithAccessType(extendRelevantVars(relevantVars, labels)) }.mergeAndCollect()
     }
-    is SequenceLabel -> labels.map { it.collectVarsWithAccessType() }.fold(mapOf()) { acc, next ->
-        (acc.keys + next.keys).associateWith { acc[it]==true || next[it]==true }
+    is SequenceLabel -> {
+        labels.map { it.collectVarsWithAccessType(extendRelevantVars(relevantVars, labels)) }.mergeAndCollect()
     }
-    is InvokeLabel -> params.map { ExprUtils.getVars(it) }.flatten().associateWith { false }
-    is JoinLabel -> mapOf(pidVar to false)
-    is ReadLabel -> mapOf(global to false, local to false)
-    is StartLabel -> params.map { ExprUtils.getVars(it) }.flatten().associateWith { false } + mapOf(pidVar to false)
-    is WriteLabel -> mapOf(global to true, local to true)
+    is InvokeLabel -> params.map { ExprUtils.getVars(it) }.flatten().associateWith { READ }
+    is JoinLabel -> mapOf(pidVar to READ)
+    is ReadLabel -> mapOf(global to READ, local to READ)
+    is StartLabel -> params.map { ExprUtils.getVars(it) }.flatten().associateWith { READ } + mapOf(pidVar to READ)
+    is WriteLabel -> mapOf(global to WRITE, local to WRITE)
     else -> emptyMap()
+}
+
+/**
+ * Returns the global variables accessed by the label (the variables present in the given argument).
+ */
+private fun XcfaLabel.collectGlobalVars(globalVars: Set<VarDecl<*>>, relevantVars: Set<VarDecl<*>>?) =
+    collectVarsWithAccessType(relevantVars).filter { labelVar -> globalVars.any { it == labelVar.key } }
+
+inline val XcfaLabel.isAtomicBegin get() = this is FenceLabel && this.labels.contains("ATOMIC_BEGIN")
+inline val XcfaLabel.isAtomicEnd get() = this is FenceLabel && this.labels.contains("ATOMIC_END")
+
+/**
+ * Returns the global variables (potentially indirectly) accessed by the edge.
+ * If the edge starts an atomic block, all variable accesses in the atomic block is returned.
+ * Variables are associated with a boolean value: true if the variable is written and false otherwise.
+ */
+fun XcfaEdge.getGlobalVars(xcfa: XCFA, relevantVars: Set<VarDecl<*>>? = null): Map<VarDecl<*>, AccessType> {
+    val globalVars = xcfa.vars.map(XcfaGlobalVar::wrappedVar).toSet()
+    var label = this.label
+    if (label is SequenceLabel && label.labels.size == 1) label = label.labels[0]
+    if (label.isAtomicBegin || (label is SequenceLabel && label.labels.any { it.isAtomicBegin } && label.labels.none { it.isAtomicEnd })) {
+        val vars = mutableMapOf<VarDecl<*>, AccessType>()
+        val processed = mutableSetOf<XcfaEdge>()
+        val unprocessed = mutableListOf(this)
+        while (unprocessed.isNotEmpty()) {
+            val e = unprocessed.removeFirst()
+            var eLabel = e.label
+            if (eLabel is SequenceLabel && eLabel.labels.size == 1) eLabel = eLabel.labels[0]
+            eLabel.collectGlobalVars(globalVars, relevantVars).forEach { (varDecl, accessType) ->
+                vars[varDecl] = accessType.merge(vars[varDecl])
+            }
+            processed.add(e)
+            if (!(eLabel.isAtomicEnd || (eLabel is SequenceLabel && eLabel.labels.any { it.isAtomicEnd }))) {
+                unprocessed.addAll(e.target.outgoingEdges subtract processed)
+            }
+        }
+        return vars
+    } else {
+        return label.collectGlobalVars(globalVars, relevantVars)
+    }
+}
+
+/**
+ * Returns true if the edge starts an atomic block.
+ */
+fun XcfaEdge.startsAtomic(): Boolean {
+    var label = this.label
+    if (label is SequenceLabel && label.labels.size == 1) label = label.labels[0]
+    return label is FenceLabel && label.labels.contains("ATOMIC_BEGIN")
 }
 
 fun XCFA.getSymbols(): Pair<XcfaScope, Env> {
