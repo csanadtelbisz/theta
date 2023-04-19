@@ -83,20 +83,20 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
     companion object {
         var random: Random = Random.Default // use Random(seed) with a seed or Random.Default without seed
 
-        private val simpleXcfaLts = getXcfaLts()
-
-        private val State.enabled: Set<A>
-            get() {
-                val enabledActions = simpleXcfaLts.getEnabledActionsFor(this as S)
-                enabledActions.forEach { it.varLookUp = this.processes[it.pid]!!.varLookup.peek() }
-                return enabledActions
-            }
-
         fun <E : ExprState> getPartialOrder(partialOrd: PartialOrd<E>) =
             PartialOrd<E> { s1, s2 ->
                 partialOrd.isLeq(s1, s2) && s2.reExplored == true && s1.sleep.containsAll(s2.sleep - s2.explored)
             }
     }
+
+    private val simpleXcfaLts = getXcfaLts(xcfa)
+
+    private val State.enabled: Set<A>
+        get() {
+            val enabledActions = simpleXcfaLts.getEnabledActionsFor(this as S)
+            enabledActions.forEach { it.varLookUp = this.processes[it.pid]!!.varLookup.peek() }
+            return enabledActions
+        }
 
     private data class StackItem(
         val node: Node,

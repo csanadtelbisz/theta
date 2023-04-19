@@ -36,12 +36,13 @@ public class XcfaPorLts extends PorLts<XcfaState<?>, XcfaAction, XcfaEdge> {
 
 	private final XCFA xcfa;
 
-	private final LTS<XcfaState<?>, XcfaAction> simpleXcfaLts = getXcfaLts();
+	private final LTS<XcfaState<?>, XcfaAction> simpleXcfaLts;
 
 	private final Random random = new Random();
 
 	public XcfaPorLts(XCFA xcfa) {
 		this.xcfa = xcfa;
+		simpleXcfaLts = getXcfaLts(xcfa);
 		collectBackwardTransitions();
 	}
 

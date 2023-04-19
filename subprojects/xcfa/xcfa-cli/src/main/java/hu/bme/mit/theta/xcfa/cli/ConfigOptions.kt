@@ -58,11 +58,11 @@ enum class POR(
     val getLts: (XCFA, Map<Decl<out hu.bme.mit.theta.core.type.Type>, Set<XcfaState<*>>>) -> LTS<XcfaState<out ExprState>, XcfaAction>,
     val isDynamic: Boolean
 ) {
-    NOPOR({_, _ -> getXcfaLts() }, false),
+    NOPOR({ xcfa, _ -> getXcfaLts(xcfa) }, false),
     SPOR({ xcfa, _ -> XcfaPorLts(xcfa) }, false),
-    DPOR({xcfa, _ ->  XcfaDporLts(xcfa) }, true),
+    DPOR({ xcfa, _ ->  XcfaDporLts(xcfa) }, true),
     AASPOR({ xcfa, registry -> XcfaAaporLts(xcfa, registry) }, false),
-    AADPOR({xcfa, _ -> XcfaAadporLts(xcfa) }, true)
+    AADPOR({ xcfa, _ -> XcfaAadporLts(xcfa) }, true)
 }
 
 enum class Strategy {

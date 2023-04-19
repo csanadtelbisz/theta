@@ -48,6 +48,7 @@ class LbePass : ProcedurePass {
          * Applies sequential collapsing on atomic blocks and consecutive local operations.
          */
         LBE_LOCAL,
+        LBE_AA,
 
         /**
          * Enables collapsing of sequential edges of a location where the number of incoming edges to the location is
@@ -88,7 +89,7 @@ class LbePass : ProcedurePass {
      *
      */
     override fun run(builder: XcfaProcedureBuilder): XcfaProcedureBuilder {
-        if (level == LbeLevel.NO_LBE || builder.errorLoc.isEmpty) return builder
+        if (level == LbeLevel.NO_LBE || level == LbeLevel.LBE_AA || builder.errorLoc.isEmpty) return builder
 
         if (level == LbeLevel.LBE_SEQ || level == LbeLevel.LBE_FULL && ArchitectureConfig.multiThreading) {
             level = LbeLevel.LBE_LOCAL
