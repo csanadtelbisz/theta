@@ -6,6 +6,7 @@ import hu.bme.mit.theta.analysis.expr.ExprState
 import hu.bme.mit.theta.xcfa.analysis.XcfaAction
 import hu.bme.mit.theta.xcfa.analysis.XcfaState
 import hu.bme.mit.theta.xcfa.analysis.getCoreXcfaLts
+import hu.bme.mit.theta.xcfa.getAtomicBlockInnerLocations
 import hu.bme.mit.theta.xcfa.getGlobalVars
 import hu.bme.mit.theta.xcfa.model.SequenceLabel
 import hu.bme.mit.theta.xcfa.model.XCFA
@@ -16,6 +17,8 @@ class XcfaLbeLts(private val xcfa: XCFA) : LTS<XcfaState<out ExprState>, XcfaAct
         private val simpleXcfaLts = getCoreXcfaLts()
     }
 
+    private val atomicBlockInnerLocations = xcfa.procedures.flatMap { getAtomicBlockInnerLocations(it.initLoc) }
+
     override fun getEnabledActionsFor(state: XcfaState<out ExprState>): Set<XcfaAction> =
         simpleXcfaLts.getEnabledActionsFor(state)
 
@@ -24,15 +27,20 @@ class XcfaLbeLts(private val xcfa: XCFA) : LTS<XcfaState<out ExprState>, XcfaAct
         return enabledActions.map { action ->
             var edge = action.edge
             val labels = mutableListOf(edge.label)
-            while (edge.target.outgoingEdges.size == 1 && edge.next.isLocal(prec)) {
+            var globalEdgeReached = !edge.isLocal(prec)
+            while (edge.target.outgoingEdges.size == 1 && (edge.target in atomicBlockInnerLocations || !globalEdgeReached)) {
                 edge = edge.next
+                if (!edge.isLocal(prec)) {
+                    globalEdgeReached = true
+                    if (edge.target !in atomicBlockInnerLocations) break
+                }
                 labels.add(edge.label)
             }
             XcfaAction(
-                action.pid,
-                action.edge.source,
-                edge.target,
-                if (labels.size == 1) labels.first() else SequenceLabel(labels)
+                pid = action.pid,
+                source = action.edge.source,
+                target = edge.target,
+                label = if (labels.size == 1) labels.first() else SequenceLabel(labels)
             )
         }.toSet()
     }

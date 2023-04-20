@@ -212,23 +212,22 @@ fun XcfaLabel.getFlatLabels(): List<XcfaLabel> = when(this) {
 }
 
 
-private fun getAtomicBlockInnerLocations(initialLocation: XcfaLocation): List<XcfaLocation> {
-    val atomicLocations: MutableList<XcfaLocation> = ArrayList()
-    val visitedLocations: MutableList<XcfaLocation> = ArrayList()
-    val locationsToVisit: MutableList<XcfaLocation> = ArrayList()
-    val isAtomic: HashMap<XcfaLocation, Boolean> = HashMap()
-    locationsToVisit.add(initialLocation)
+fun getAtomicBlockInnerLocations(initialLocation: XcfaLocation): List<XcfaLocation> {
+    val atomicLocations = mutableListOf<XcfaLocation>()
+    val visitedLocations = mutableListOf<XcfaLocation>()
+    val locationsToVisit = mutableListOf(initialLocation)
+    val isAtomic = mutableMapOf<XcfaLocation, Boolean>()
     isAtomic[initialLocation] = false
-    while (!locationsToVisit.isEmpty()) {
+    while (locationsToVisit.isNotEmpty()) {
         val visiting = locationsToVisit.removeAt(0)
         if (isAtomic[visiting]!!) atomicLocations.add(visiting)
         visitedLocations.add(visiting)
         for (outEdge in visiting.outgoingEdges) {
             var isNextAtomic = isAtomic[visiting]!!
-            if (outEdge.getFlatLabels().stream().anyMatch { label -> label is FenceLabel && label.labels.contains("ATOMIC_BEGIN") }) {
+            if (outEdge.getFlatLabels().any { it.isAtomicBegin }) {
                 isNextAtomic = true
             }
-            if (outEdge.getFlatLabels().stream().anyMatch { label -> label is FenceLabel && label.labels.contains("ATOMIC_END") }) {
+            if (outEdge.getFlatLabels().any { it.isAtomicEnd }) {
                 isNextAtomic = false
             }
             val target = outEdge.target
