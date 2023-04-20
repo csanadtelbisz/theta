@@ -27,10 +27,10 @@ class XcfaLbeLts(private val xcfa: XCFA) : LTS<XcfaState<out ExprState>, XcfaAct
         return enabledActions.map { action ->
             var edge = action.edge
             val labels = mutableListOf(edge.label)
-            var globalEdgeReached = !edge.isLocal(prec)
+            var globalEdgeReached = edge.isGlobal(prec)
             while (edge.target.outgoingEdges.size == 1 && (edge.target in atomicBlockInnerLocations || !globalEdgeReached)) {
                 edge = edge.next
-                if (!edge.isLocal(prec)) {
+                if (edge.isGlobal(prec)) {
                     globalEdgeReached = true
                     if (edge.target !in atomicBlockInnerLocations) break
                 }
@@ -45,8 +45,8 @@ class XcfaLbeLts(private val xcfa: XCFA) : LTS<XcfaState<out ExprState>, XcfaAct
         }.toSet()
     }
 
-    private fun <P : Prec> XcfaEdge.isLocal(prec: P) =
-        (this.getGlobalVars(xcfa).keys intersect prec.usedVars.toSet()).isEmpty()
+    private fun <P : Prec> XcfaEdge.isGlobal(prec: P) =
+        (this.getGlobalVars(xcfa).keys intersect prec.usedVars.toSet()).isNotEmpty()
 
     private val XcfaEdge.next get() = target.outgoingEdges.first()
 }
