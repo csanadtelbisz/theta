@@ -45,7 +45,7 @@ public abstract class PorLts<S extends State, A extends Action, T> implements LT
 	 * Shared objects (~global variables) that are used by the key transition or by transitions reachable from the
 	 * current state via a given transition.
 	 */
-	private final HashMap<T, Set<? extends Decl<? extends Type>>> influencedSharedObjects = new HashMap<>();
+	private final HashMap<T, Set<Set<? extends Decl<? extends Type>>>> influencedSharedObjects = new HashMap<>();
 
 	/**
 	 * Backward transitions in the transition system (a transition of a loop).
@@ -144,19 +144,20 @@ public abstract class PorLts<S extends State, A extends Action, T> implements LT
 	 * @return true, if the two actions are dependent in the context of persistent sets
 	 */
 	protected boolean areDependents(A persistentSetAction, A action) {
-		return canEnOrDisableEachOther(persistentSetAction, action) ||
-				getInfluencedSharedObjects(getTransitionOf(action)).stream().anyMatch(varDecl ->
-						getCachedUsedSharedObjects(getTransitionOf(persistentSetAction)).contains(varDecl));
+		var usedByPersistentSetAction = getCachedUsedSharedObjects(getTransitionOf(persistentSetAction));
+		return isSameProcess(persistentSetAction, action) ||
+				getInfluencedSharedObjects(getTransitionOf(action)).stream().anyMatch(varSet ->
+						varSet.stream().anyMatch(usedByPersistentSetAction::contains));
 	}
 
 	/**
-	 * Determines whether two actions can enable or disable each other (if true, the two actions are dependent).
+	 * Determines whether two actions are in the same process.
 	 *
 	 * @param action1 action 1
 	 * @param action2 action 2
-	 * @return true, if the two actions can enable or disable each other
+	 * @return true, if the two actions are in the same process
 	 */
-	protected abstract boolean canEnOrDisableEachOther(A action1, A action2);
+	protected abstract boolean isSameProcess(A action1, A action2);
 
 	/**
 	 * Determines whether the given action is a backward action.
@@ -225,7 +226,7 @@ public abstract class PorLts<S extends State, A extends Action, T> implements LT
 	 * @param transition whose successor transitions' shared objects are to be returned.
 	 * @return the set of influenced shared objects
 	 */
-	protected Set<? extends Decl<? extends Type>> getInfluencedSharedObjects(T transition) {
+	protected Set<Set<? extends Decl<? extends Type>>> getInfluencedSharedObjects(T transition) {
 		if (!influencedSharedObjects.containsKey(transition)) {
 			influencedSharedObjects.put(transition, getSharedObjectsWithBFS(transition, t -> true));
 		}
@@ -236,18 +237,19 @@ public abstract class PorLts<S extends State, A extends Action, T> implements LT
 	 * Returns shared objects (~global variables) encountered in a search starting from a given transition.
 	 *
 	 * @param startTransition the start point (transition) of the search
-	 * @param goFurther the predicate that tells whether more transitions have to be explored through this transition
+	 * @param goFurther       the predicate that tells whether more transitions have to be explored through this
+	 *                        transition
 	 * @return the set of encountered shared objects
 	 */
-	protected Set<? extends Decl<? extends Type>> getSharedObjectsWithBFS(T startTransition, Predicate<T> goFurther) {
-		Set<Decl<? extends Type>> vars = new LinkedHashSet<>();
+	protected Set<Set<? extends Decl<? extends Type>>> getSharedObjectsWithBFS(T startTransition, Predicate<T> goFurther) {
+		Set<Set<? extends Decl<? extends Type>>> vars = new LinkedHashSet<>();
 		List<T> exploredTransitions = new ArrayList<>();
 		List<T> transitionsToExplore = new ArrayList<>();
 		transitionsToExplore.add(startTransition);
 
 		while (!transitionsToExplore.isEmpty()) {
 			T exploring = transitionsToExplore.remove(0);
-			vars.addAll(getDirectlyUsedSharedObjects(exploring));
+			vars.add(getDirectlyUsedSharedObjects(exploring));
 
 			if (goFurther.test(exploring)) {
 				Set<T> successiveTransitions = getSuccessiveTransitions(exploring);
@@ -261,9 +263,4 @@ public abstract class PorLts<S extends State, A extends Action, T> implements LT
 		}
 		return vars;
 	}
-
-	/**
-	 * Collects backward transitions of the transition system.
-	 */
-	protected abstract void collectBackwardTransitions();
 }

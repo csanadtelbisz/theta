@@ -18,6 +18,7 @@ package hu.bme.mit.theta.analysis;
 import hu.bme.mit.theta.core.decl.VarDecl;
 
 import java.util.Collection;
+import java.util.Set;
 
 /**
  * Common interface for precisions.
@@ -25,5 +26,9 @@ import java.util.Collection;
 public interface Prec {
 
 	Collection<VarDecl<?>> getUsedVars();
+
+	default Collection<Collection<VarDecl<?>>> getUsedVarsByPrecItem() {
+		return Set.of(getUsedVars());
+	}
 
 }

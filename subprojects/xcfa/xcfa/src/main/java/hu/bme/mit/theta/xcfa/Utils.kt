@@ -116,7 +116,7 @@ inline val XcfaLabel.isAtomicEnd get() = this is FenceLabel && this.labels.conta
 /**
  * Returns the global variables (potentially indirectly) accessed by the edge.
  * If the edge starts an atomic block, all variable accesses in the atomic block is returned.
- * Variables are associated with a boolean value: true if the variable is written and false otherwise.
+ * Variables are associated with a pair of boolean values: the first is true if the variable is read and false otherwise. The second is similar for write access.
  */
 fun XcfaEdge.getGlobalVars(xcfa: XCFA, relevantVars: Set<VarDecl<*>>? = null): Map<VarDecl<*>, AccessType> {
     val globalVars = xcfa.vars.map(XcfaGlobalVar::wrappedVar).toSet()
