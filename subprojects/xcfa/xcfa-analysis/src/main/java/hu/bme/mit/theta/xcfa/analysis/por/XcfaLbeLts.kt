@@ -14,16 +14,16 @@ import hu.bme.mit.theta.xcfa.model.XcfaEdge
 
 class XcfaLbeLts(private val xcfa: XCFA) : LTS<XcfaState<out ExprState>, XcfaAction> {
     companion object {
-        private val simpleXcfaLts = getCoreXcfaLts()
+        private val coreXcfaLts = getCoreXcfaLts()
     }
 
     private val atomicBlockInnerLocations = xcfa.procedures.flatMap { getAtomicBlockInnerLocations(it.initLoc) }
 
     override fun getEnabledActionsFor(state: XcfaState<out ExprState>): Set<XcfaAction> =
-        simpleXcfaLts.getEnabledActionsFor(state)
+        coreXcfaLts.getEnabledActionsFor(state)
 
     override fun <P : Prec> getEnabledActionsFor(state: XcfaState<out ExprState>, exploredActions: Collection<XcfaAction>, prec: P): Set<XcfaAction> {
-        val enabledActions = simpleXcfaLts.getEnabledActionsFor(state)
+        val enabledActions = coreXcfaLts.getEnabledActionsFor(state)
         return enabledActions.map { action ->
             var edge = action.edge
             val labels = mutableListOf(edge.label)

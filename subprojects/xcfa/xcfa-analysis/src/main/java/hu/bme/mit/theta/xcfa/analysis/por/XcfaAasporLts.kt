@@ -26,13 +26,9 @@ import hu.bme.mit.theta.xcfa.model.XCFA
 class XcfaAasporLts(xcfa: XCFA, private val ignoredVarRegistry: MutableMap<Decl<out Type>, MutableSet<ExprState>>) :
     XcfaSporLts(xcfa) {
 
-    override fun <P : Prec> getEnabledActionsFor(
-        state: XcfaState<*>,
-        exploredActions: Collection<XcfaAction>,
-        prec: P
-    ): Set<XcfaAction> {
+    override fun <P : Prec> getEnabledActionsFor(state: XcfaState<*>, exploredActions: Collection<XcfaAction>, prec: P): Set<XcfaAction> {
         // Collecting enabled actions
-        val allEnabledActions = getAllEnabledActionsFor(state)
+        val allEnabledActions = getAllEnabledActionsFor(state, exploredActions, prec)
 
         // Calculating the persistent set starting from every (or some of the) enabled transition or from exploredActions if it is not empty
         // The minimal persistent set is stored
@@ -127,8 +123,8 @@ class XcfaAasporLts(xcfa: XCFA, private val ignoredVarRegistry: MutableMap<Decl<
 
             val syntacticIntersection = varSet intersect usedByPersistentSetAction
 
-            if(syntacticIntersection.isNotEmpty()) {
-                if(depAbstraction) {
+            if (syntacticIntersection.isNotEmpty()) {
+                if (depAbstraction) {
                     return true
                 } else {
                     ignoredVars.addAll(syntacticIntersection)

@@ -87,9 +87,9 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
             }
     }
 
-    private val simpleXcfaLts = getXcfaLts(xcfa)
+    private val coreXcfaLts = getXcfaLts(xcfa)
 
-    private val State.enabled: Set<A> get() = simpleXcfaLts.getEnabledActionsFor(this as S)
+    private val State.enabled: Set<A> get() = coreXcfaLts.getEnabledActionsFor(this as S)
 
     private data class StackItem(
         val node: Node,

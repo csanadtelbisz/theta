@@ -18,6 +18,7 @@ package hu.bme.mit.theta.analysis.algorithm;
 
 import hu.bme.mit.theta.analysis.Action;
 import hu.bme.mit.theta.analysis.LTS;
+import hu.bme.mit.theta.analysis.Prec;
 import hu.bme.mit.theta.analysis.State;
 import hu.bme.mit.theta.core.decl.Decl;
 import hu.bme.mit.theta.core.type.Type;
@@ -32,7 +33,7 @@ import java.util.function.Predicate;
  * @param <A> the type of the action (transition in the state space)
  * @param <T> the type of the transition in the original formalism
  */
-public abstract class PorLts<S extends State, A extends Action, T> implements LTS<S, A> {
+public abstract class SporLts<S extends State, A extends Action, T> implements LTS<S, A> {
 
 	/* CACHE COLLECTIONS */
 
@@ -52,6 +53,11 @@ public abstract class PorLts<S extends State, A extends Action, T> implements LT
 	 */
 	protected final Set<T> backwardTransitions = new LinkedHashSet<>();
 
+	protected final LTS<S, A> coreLts;
+
+	protected SporLts(LTS<S, A> coreLts) {
+		this.coreLts = coreLts;
+	}
 
 	/**
 	 * Returns the enabled actions in the ARG from the given state filtered with a POR algorithm.
@@ -62,13 +68,23 @@ public abstract class PorLts<S extends State, A extends Action, T> implements LT
 	@Override
 	public Set<A> getEnabledActionsFor(S state) {
 		// Collecting enabled actions
-		Collection<A> allEnabledActions = getAllEnabledActionsFor(state);
+		Collection<A> enabledActions = getAllEnabledActionsFor(state);
+		return getFilteredEnabledActions(enabledActions);
+	}
 
+	@Override
+	public <P extends Prec> Set<A> getEnabledActionsFor(S state, Collection<A> exploredActions, P prec) {
+		// Collecting enabled actions
+		Collection<A> enabledActions = getAllEnabledActionsFor(state, exploredActions, prec);
+		return getFilteredEnabledActions(enabledActions);
+	}
+
+	private Set<A> getFilteredEnabledActions(Collection<A> enabledActions) {
 		// Calculating the persistent set starting from every (or some of the) enabled transition; the minimal persistent set is stored
 		Set<A> minimalPersistentSet = new LinkedHashSet<>();
-		Collection<Collection<A>> persistentSetFirstActions = getPersistentSetFirstActions(allEnabledActions);
+		Collection<Collection<A>> persistentSetFirstActions = getPersistentSetFirstActions(enabledActions);
 		for (Collection<A> firstActions : persistentSetFirstActions) {
-			Set<A> persistentSet = calculatePersistentSet(allEnabledActions, firstActions);
+			Set<A> persistentSet = calculatePersistentSet(enabledActions, firstActions);
 			if (minimalPersistentSet.size() == 0 || persistentSet.size() < minimalPersistentSet.size()) {
 				minimalPersistentSet = persistentSet;
 			}
@@ -122,7 +138,13 @@ public abstract class PorLts<S extends State, A extends Action, T> implements LT
 	 * @param state the state whose enabled actions are to be returned
 	 * @return the enabled actions in the state
 	 */
-	protected abstract Set<A> getAllEnabledActionsFor(S state);
+	protected Set<A> getAllEnabledActionsFor(S state) {
+		return coreLts.getEnabledActionsFor(state);
+	}
+
+	protected <P extends Prec> Set<A> getAllEnabledActionsFor(S state, Collection<A> exploredActions, P prec) {
+		return coreLts.getEnabledActionsFor(state, exploredActions, prec);
+	}
 
 	/**
 	 * Returns the actions from where persistent sets will be calculated (a subset of the given enabled actions).
@@ -206,7 +228,7 @@ public abstract class PorLts<S extends State, A extends Action, T> implements LT
 	}
 
 	/**
-	 * Same as {@link PorLts#getUsedSharedObjects(T transition)} with an additional cache layer.
+	 * Same as {@link SporLts#getUsedSharedObjects(T transition)} with an additional cache layer.
 	 *
 	 * @param transition whose shared objects are to be returned
 	 * @return the set of directly or indirectly used shared objects
