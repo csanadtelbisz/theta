@@ -49,6 +49,7 @@ class LbePass : ProcedurePass {
          */
         LBE_LOCAL,
         LBE_AA,
+        LBE_AA2,
 
         /**
          * Enables collapsing of sequential edges of a location where the number of incoming edges to the location is
@@ -91,6 +92,8 @@ class LbePass : ProcedurePass {
     override fun run(builder: XcfaProcedureBuilder): XcfaProcedureBuilder {
         if (level == LbeLevel.NO_LBE || level == LbeLevel.LBE_AA || builder.errorLoc.isEmpty) return builder
 
+        val originalLevel = level
+        if (level == LbeLevel.LBE_AA2) level = LbeLevel.LBE_LOCAL
         if (level == LbeLevel.LBE_SEQ || level == LbeLevel.LBE_FULL && ArchitectureConfig.multiThreading) {
             level = LbeLevel.LBE_LOCAL
         }
@@ -113,9 +116,10 @@ class LbePass : ProcedurePass {
 
         // Step 3
         //if (level != LbeLevel.LBE_LOCAL) {
-            removeAllMiddleLocations(builder.getLocs().toList(), false)
+        removeAllMiddleLocations(builder.getLocs().toList(), false)
         //}
         printToDot("--- AFTER TRANSFORMATION ---")
+        if (originalLevel == LbeLevel.LBE_AA2) level = LbeLevel.LBE_AA
         return builder
     }
 
