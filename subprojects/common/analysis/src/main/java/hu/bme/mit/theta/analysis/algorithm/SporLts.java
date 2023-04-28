@@ -55,7 +55,7 @@ public abstract class SporLts<S extends State, A extends Action, T> implements L
 
 	protected final LTS<S, A> coreLts;
 
-	protected PorLts(LTS<S, A> coreLts) {
+	protected SporLts(LTS<S, A> coreLts) {
 		this.coreLts = coreLts;
 	}
 
