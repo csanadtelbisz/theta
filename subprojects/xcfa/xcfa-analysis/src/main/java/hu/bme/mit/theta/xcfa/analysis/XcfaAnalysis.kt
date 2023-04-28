@@ -40,6 +40,7 @@ import hu.bme.mit.theta.xcfa.getFlatLabels
 import hu.bme.mit.theta.xcfa.getGlobalVars
 import hu.bme.mit.theta.xcfa.isWritten
 import hu.bme.mit.theta.xcfa.model.*
+import hu.bme.mit.theta.xcfa.passes.LbePass
 import hu.bme.mit.theta.xcfa.passes.changeVars
 import hu.bme.mit.theta.xcfa.startsAtomic
 import java.util.*
@@ -88,13 +89,14 @@ fun getCoreXcfaLts() = LTS<XcfaState<out ExprState>, XcfaAction> {
                                 XcfaAction(proc.key, edge.withLabel(newLabel))
                         }
                     }
-    }.flatten().toSet()
+    }.flatten().filter { !s.apply(it).first.bottom }.toSet()
 }
 
-fun getXcfaLts(): LTS<XcfaState<out ExprState>, XcfaAction> {
-    val lts = getCoreXcfaLts()
-    return LTS<XcfaState<out ExprState>, XcfaAction> { s ->
-        lts.getEnabledActionsFor(s).filter { !s.apply(it).first.bottom }.toSet()
+fun getXcfaLts(xcfa: XCFA): LTS<XcfaState<out ExprState>, XcfaAction> {
+    return if (LbePass.level == LbePass.LbeLevel.LBE_AA) {
+        XcfaLbeLts(xcfa)
+    } else {
+        getCoreXcfaLts()
     }
 }
 

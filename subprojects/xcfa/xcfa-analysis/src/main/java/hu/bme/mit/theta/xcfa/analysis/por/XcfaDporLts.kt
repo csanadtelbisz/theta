@@ -64,15 +64,15 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
     companion object {
         var random: Random = Random.Default // use Random(seed) with a seed or Random.Default without seed
 
-        private val simpleXcfaLts = getXcfaLts()
-
-        private val State.enabled: Collection<A> get() = simpleXcfaLts.getEnabledActionsFor(this as S)
-
         fun <E : ExprState> getPartialOrder(partialOrd: PartialOrd<E>) =
             PartialOrd<E> { s1, s2 ->
                 partialOrd.isLeq(s1, s2) && s2.reExplored == true && s1.sleep.containsAll(s2.sleep - s2.explored)
             }
     }
+
+    private val coreXcfaLts = getXcfaLts(xcfa)
+
+    private val State.enabled get() = coreXcfaLts.getEnabledActionsFor(this as S)
 
     private data class StackItem(
         val node: Node,

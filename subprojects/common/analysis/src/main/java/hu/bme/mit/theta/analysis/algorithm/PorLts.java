@@ -18,6 +18,7 @@ package hu.bme.mit.theta.analysis.algorithm;
 
 import hu.bme.mit.theta.analysis.Action;
 import hu.bme.mit.theta.analysis.LTS;
+import hu.bme.mit.theta.analysis.Prec;
 import hu.bme.mit.theta.analysis.State;
 import hu.bme.mit.theta.core.decl.Decl;
 import hu.bme.mit.theta.core.type.Type;
@@ -52,6 +53,11 @@ public abstract class PorLts<S extends State, A extends Action, T> implements LT
 	 */
 	protected final Set<T> backwardTransitions = new LinkedHashSet<>();
 
+	protected final LTS<S, A> coreLts;
+
+	protected PorLts(LTS<S, A> coreLts) {
+		this.coreLts = coreLts;
+	}
 
 	/**
 	 * Returns the enabled actions in the ARG from the given state filtered with a POR algorithm.
@@ -62,13 +68,13 @@ public abstract class PorLts<S extends State, A extends Action, T> implements LT
 	@Override
 	public Set<A> getEnabledActionsFor(S state) {
 		// Collecting enabled actions
-		Collection<A> allEnabledActions = getAllEnabledActionsFor(state);
+		Collection<A> enabledActions = getAllEnabledActionsFor(state);
 
 		// Calculating the persistent set starting from every (or some of the) enabled transition; the minimal persistent set is stored
 		Set<A> minimalPersistentSet = new LinkedHashSet<>();
-		Collection<Collection<A>> persistentSetFirstActions = getPersistentSetFirstActions(allEnabledActions);
+		Collection<Collection<A>> persistentSetFirstActions = getPersistentSetFirstActions(enabledActions);
 		for (Collection<A> firstActions : persistentSetFirstActions) {
-			Set<A> persistentSet = calculatePersistentSet(allEnabledActions, firstActions);
+			Set<A> persistentSet = calculatePersistentSet(enabledActions, firstActions);
 			if (minimalPersistentSet.size() == 0 || persistentSet.size() < minimalPersistentSet.size()) {
 				minimalPersistentSet = persistentSet;
 			}
@@ -122,7 +128,13 @@ public abstract class PorLts<S extends State, A extends Action, T> implements LT
 	 * @param state the state whose enabled actions are to be returned
 	 * @return the enabled actions in the state
 	 */
-	protected abstract Collection<A> getAllEnabledActionsFor(S state);
+	protected Collection<A> getAllEnabledActionsFor(S state) {
+		return coreLts.getEnabledActionsFor(state);
+	}
+
+	protected <P extends Prec> Collection<A> getAllEnabledActionsFor(S state, Collection<A> exploredActions, P prec) {
+		return coreLts.getEnabledActionsFor(state, exploredActions, prec);
+	}
 
 	/**
 	 * Returns the actions from where persistent sets will be calculated (a subset of the given enabled actions).

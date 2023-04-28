@@ -27,19 +27,15 @@ import hu.bme.mit.theta.xcfa.model.*
 import java.util.*
 import kotlin.random.Random
 
-open class XcfaSporLts(private val xcfa: XCFA) : PorLts<XcfaState<*>, XcfaAction, XcfaEdge>() {
+open class XcfaSporLts(private val xcfa: XCFA) : PorLts<XcfaState<*>, XcfaAction, XcfaEdge>(getXcfaLts(xcfa)) {
 
     companion object {
         private val random: Random = Random.Default
-        private val simpleXcfaLts = getXcfaLts()
     }
 
     init {
         collectBackwardTransitions()
     }
-
-    override fun getAllEnabledActionsFor(state: XcfaState<*>): Collection<XcfaAction> =
-        simpleXcfaLts.getEnabledActionsFor(state)
 
     override fun getPersistentSetFirstActions(allEnabledActions: Collection<XcfaAction>): Collection<Collection<XcfaAction>> {
         val enabledActionsByProcess = allEnabledActions.groupBy(XcfaAction::pid)
