@@ -16,6 +16,7 @@
 package hu.bme.mit.theta.xcfa.analysis.por
 
 import hu.bme.mit.theta.analysis.Prec
+import hu.bme.mit.theta.analysis.algorithm.PorLogger
 import hu.bme.mit.theta.analysis.expr.ExprState
 import hu.bme.mit.theta.core.decl.Decl
 import hu.bme.mit.theta.core.type.Type
@@ -31,6 +32,8 @@ class XcfaAasporLts(xcfa: XCFA, private val ignoredVarRegistry: MutableMap<Decl<
         exploredActions: Collection<XcfaAction>,
         prec: P
     ): Set<XcfaAction> {
+        if (PorLogger.dependencyRelationSize.size < PorLogger.preservedStates.size) dependencyRelationSize(xcfa, prec)
+
         // Collecting enabled actions
         val allEnabledActions = getAllEnabledActionsFor(state)
 

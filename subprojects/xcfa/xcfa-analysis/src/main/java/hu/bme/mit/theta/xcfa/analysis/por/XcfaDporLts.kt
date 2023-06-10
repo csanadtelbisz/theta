@@ -5,6 +5,7 @@ import hu.bme.mit.theta.analysis.PartialOrd
 import hu.bme.mit.theta.analysis.Prec
 import hu.bme.mit.theta.analysis.State
 import hu.bme.mit.theta.analysis.algorithm.ArgNode
+import hu.bme.mit.theta.analysis.algorithm.PorLogger
 import hu.bme.mit.theta.analysis.expr.ExprState
 import hu.bme.mit.theta.analysis.waitlist.Waitlist
 import hu.bme.mit.theta.xcfa.analysis.XcfaAction
@@ -436,6 +437,7 @@ class XcfaAadporLts(private val xcfa: XCFA) : XcfaDporLts(xcfa) {
      * Returns actions to be explored from the given state considering the given precision.
      */
     override fun <P : Prec> getEnabledActionsFor(state: S, exploredActions: Collection<A>, prec: P): Set<A> {
+        if (PorLogger.dependencyRelationSize.size < PorLogger.preservedStates.size) dependencyRelationSize(xcfa, prec)
         this.prec = prec
         return getEnabledActionsFor(state)
     }
@@ -452,4 +454,42 @@ class XcfaAadporLts(private val xcfa: XCFA) : XcfaDporLts(xcfa) {
         // dependent if they access the same variable in the precision (at least one write)
         return (aGlobalVars.keys intersect bGlobalVars.keys intersect precVars).any { aGlobalVars[it].isWritten || bGlobalVars[it].isWritten }
     }
+}
+
+internal fun dependencyRelationSize(xcfa: XCFA, prec: Prec) {
+    val actions = xcfa.procedures.map { it.edges }
+    var all = 0L
+    var dependentTraditional = 0L
+    var dependentAbstraction = 0L
+    val precVars = prec.usedVars.toSet()
+
+    for (proc1 in actions) {
+        for (proc2 in actions) {
+            if (proc1 != proc2) {
+                for (action1 in proc1) {
+                    val aGlobalVars = action1.getGlobalVars(xcfa)
+                    for (action2 in proc2) {
+                        all++
+                        val bGlobalVars = action2.getGlobalVars(xcfa)
+                        val keysTraditional = aGlobalVars.keys intersect bGlobalVars.keys
+                        if (keysTraditional.any { aGlobalVars[it].isWritten || bGlobalVars[it].isWritten }) {
+                            dependentTraditional++
+                            val keysAbstraction = keysTraditional intersect precVars
+                            if (keysAbstraction.any { aGlobalVars[it].isWritten || bGlobalVars[it].isWritten }) {
+                                dependentAbstraction++
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    PorLogger.dependencyRelationSize.add(
+        PorLogger.DependencyRelationSizeEntry(
+            all,
+            dependentTraditional,
+            dependentAbstraction
+        )
+    )
 }
