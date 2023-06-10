@@ -228,7 +228,6 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
             for (index in stack.size - 1 downTo 1) {
                 if (relevantProcesses.isEmpty()) break
                 val node = stack[index].node
-                if (node.parent.get() != stack[index - 1].node) continue // skip covering node
 
                 val action = node.inEdge.get().action
                 if (relevantProcesses.contains(action.pid)) {
@@ -329,7 +328,9 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
                 val visiting = virtualStack.pop()
                 while (stack.size > startStackSize && stack.peek().node != visiting.parent.get()) stack.pop()
 
-                if (!push(visiting, startStackSize) || noInfluenceOnRealExploration(realStackSize)) continue
+                if (node != visiting) {
+                    if (!push(visiting, startStackSize) || noInfluenceOnRealExploration(realStackSize)) continue
+                }
 
                 // visiting is not on the stack: no cycle && further virtual exploration can influence real exploration
                 if (visiting.isCovered) {
@@ -393,7 +394,7 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
                         return@filter false
                     }
                 }
-                true
+                false
             }.toSet()
         }
 
