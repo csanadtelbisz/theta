@@ -24,6 +24,10 @@ import hu.bme.mit.theta.core.type.Expr
 import hu.bme.mit.theta.core.type.anytype.RefExpr
 import hu.bme.mit.theta.core.type.booltype.BoolType
 import hu.bme.mit.theta.core.utils.TypeUtils.cast
+import hu.bme.mit.theta.xcfa.analysis.por.backtrack
+import hu.bme.mit.theta.xcfa.analysis.por.reachedNumber
+import hu.bme.mit.theta.xcfa.analysis.por.sleep
+import hu.bme.mit.theta.xcfa.analysis.por.toStr
 import hu.bme.mit.theta.xcfa.getFlatLabels
 import hu.bme.mit.theta.xcfa.model.*
 import hu.bme.mit.theta.xcfa.passes.changeVars
@@ -160,7 +164,7 @@ data class XcfaState<S : ExprState> @JvmOverloads constructor(
     }
 
     override fun toString(): String {
-        return "$processes {$sGlobal, mutex=$mutexes${if(bottom) ", bottom" else ""}}"
+        return "$reachedNumber ${backtrack.toStr()}\n${sleep.toStr()}\n$processes {$sGlobal, mutex=$mutexes${if(bottom) ", bottom" else ""}}"
     }
 }
 data class XcfaProcessState(

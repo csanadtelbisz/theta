@@ -12,6 +12,7 @@ import hu.bme.mit.theta.xcfa.analysis.XcfaAction
 import hu.bme.mit.theta.xcfa.analysis.XcfaState
 import hu.bme.mit.theta.xcfa.analysis.getXcfaLts
 import hu.bme.mit.theta.xcfa.getGlobalVars
+import hu.bme.mit.theta.xcfa.isRead
 import hu.bme.mit.theta.xcfa.isWritten
 import hu.bme.mit.theta.xcfa.model.XCFA
 import java.util.*
@@ -27,15 +28,26 @@ private typealias S = XcfaState<out ExprState>
 private typealias A = XcfaAction
 private typealias Node = ArgNode<out S, A>
 
+// DEBUG
+var State.reachedNumber: Int? by nullableExtension()
+var _xcfa: XCFA? = null
+fun Set<A>.toStr() = "${
+    map {
+        val vars = it.edge.getGlobalVars(_xcfa!!)
+        "${it.pid}: ${it.source} -> ${it.target} W${vars.filter { e -> e.value.isWritten }.keys.map { v -> v.name }} R${vars.filter { e -> e.value.isRead }.keys.map { v -> v.name }}"
+    }
+}"
+// GUBED
+
 /**
  * Backtrack set of a state: actions to be explored when backtracking in DFS.
  */
-private var State.backtrack: MutableSet<A> by extension()
+var State.backtrack: MutableSet<A> by extension()
 
 /**
  * Sleep set of a state: actions that need not be explored.
  */
-private var State.sleep: MutableSet<A> by extension()
+var State.sleep: MutableSet<A> by extension()
 
 /**
  * Set of explored actions from a state.
@@ -59,6 +71,10 @@ private val Node.explored: Set<A> get() = outEdges.map { it.action }.collect(Col
  */
 open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
 
+    init {
+        _xcfa = xcfa
+    }
+
     companion object {
         var random: Random = Random.Default // use Random(seed) with a seed or Random.Default without seed
 
@@ -77,7 +93,7 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
          */
         fun <E : ExprState> getPartialOrder(partialOrd: PartialOrd<E>) =
             PartialOrd<E> { s1, s2 ->
-                partialOrd.isLeq(s1, s2) && s2.reExplored == true && s1.sleep.containsAll(s2.sleep - s2.explored)
+                partialOrd.isLeq(s1, s2) && s2.reExplored == true// && s1.sleep.containsAll(s2.sleep - s2.explored)
             }
     }
 
@@ -137,6 +153,8 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
      */
     val waitlist = object : Waitlist<Node> {
 
+        var counter = 0
+
         /**
          * Adds a new ARG node to the search stack.
          */
@@ -145,6 +163,7 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
             // lazy pruning: goes to the root when the stack is empty
             while (stack.isEmpty() && node.parent.isPresent) node = node.parent.get()
 
+            node.state.reachedNumber = counter++
             node.state.reExplored = true // lazy pruning: indicates that the state is explored in the current iteration
             push(node, stack.size)
         }
@@ -219,8 +238,8 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
             val newaction = item.inEdge.get().action
             val process = newaction.pid
 
-            val newProcessLastAction = LinkedHashMap(last.processLastAction).apply { this[process] = stack.size }
-            var newLastDependents: MutableMap<Int, Int> = LinkedHashMap(last.lastDependents[process] ?: mapOf()).apply {
+            val newProcessLastAction = last.processLastAction.toMutableMap().apply { this[process] = stack.size }
+            var newLastDependents = (last.lastDependents[process]?.toMutableMap() ?: mutableMapOf()).apply {
                 this[process] = stack.size
             }
             val relevantProcesses = (newProcessLastAction.keys - setOf(process)).toMutableSet()
@@ -263,7 +282,9 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
             val newMutexes = item.state.mutexes.keys
             val lockedMutexes = newMutexes - oldMutexes
             val releasedMutexes = oldMutexes - newMutexes
-            releasedMutexes.forEach { m -> last.mutexLocks[m]?.let { stack[it].mutexLocks.remove(m) } }
+            if (!item.state.isBottom) {
+                releasedMutexes.forEach { m -> last.mutexLocks[m]?.let { stack[it].mutexLocks.remove(m) } }
+            }
 
             val isCoveringNode = item.parent.get() != last.node
             val isVirtualExploration = virtualLimit < stack.size || isCoveringNode
@@ -307,7 +328,7 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
                             }
                         }
                     },
-                    mutexLocks = last.mutexLocks.apply {
+                    mutexLocks = last.mutexLocks.toMutableMap().apply {
                         lockedMutexes.forEach { this[it] = stack.size }
                         releasedMutexes.forEach(::remove)
                     },
