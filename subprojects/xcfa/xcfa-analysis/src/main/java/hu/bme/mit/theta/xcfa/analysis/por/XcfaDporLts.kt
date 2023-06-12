@@ -93,7 +93,7 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
          */
         fun <E : ExprState> getPartialOrder(partialOrd: PartialOrd<E>) =
             PartialOrd<E> { s1, s2 ->
-                partialOrd.isLeq(s1, s2) && s2.reExplored == true// && s1.sleep.containsAll(s2.sleep - s2.explored)
+                partialOrd.isLeq(s1, s2) && s2.reExplored == true && s1.sleep.containsAll(s2.sleep - s2.explored)
             }
     }
 
