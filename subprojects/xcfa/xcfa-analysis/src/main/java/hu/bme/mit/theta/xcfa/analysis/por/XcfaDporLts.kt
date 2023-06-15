@@ -120,6 +120,8 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
      * Returns an action (wrapped into a set) to be explored from the given state.
      */
     override fun getEnabledActionsFor(state: S): Set<A> {
+        if (PorLogger.dependencyRelationSize.size < PorLogger.preservedStates.size) dependencyRelationSize(xcfa, null)
+
         require(state == last.state)
         val possibleActions = last.backtrack subtract last.sleep
         if (possibleActions.isEmpty()) return emptySet()
@@ -457,12 +459,12 @@ class XcfaAadporLts(private val xcfa: XCFA) : XcfaDporLts(xcfa) {
     }
 }
 
-internal fun dependencyRelationSize(xcfa: XCFA, prec: Prec) {
+internal fun dependencyRelationSize(xcfa: XCFA, prec: Prec?) {
     val actions = xcfa.procedures.map { it.edges }
     var all = 0L
     var dependentTraditional = 0L
     var dependentAbstraction = 0L
-    val precVars = prec.usedVars.toSet()
+    val precVars = prec?.usedVars?.toSet()
 
     for (proc1 in actions) {
         for (proc2 in actions) {
@@ -475,8 +477,12 @@ internal fun dependencyRelationSize(xcfa: XCFA, prec: Prec) {
                         val keysTraditional = aGlobalVars.keys intersect bGlobalVars.keys
                         if (keysTraditional.any { aGlobalVars[it].isWritten || bGlobalVars[it].isWritten }) {
                             dependentTraditional++
-                            val keysAbstraction = keysTraditional intersect precVars
-                            if (keysAbstraction.any { aGlobalVars[it].isWritten || bGlobalVars[it].isWritten }) {
+                            if (precVars != null) {
+                                val keysAbstraction = keysTraditional intersect precVars
+                                if (keysAbstraction.any { aGlobalVars[it].isWritten || bGlobalVars[it].isWritten }) {
+                                    dependentAbstraction++
+                                }
+                            } else {
                                 dependentAbstraction++
                             }
                         }

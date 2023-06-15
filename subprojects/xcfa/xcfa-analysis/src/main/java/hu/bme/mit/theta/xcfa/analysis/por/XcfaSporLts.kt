@@ -15,6 +15,7 @@
  */
 package hu.bme.mit.theta.xcfa.analysis.por
 
+import hu.bme.mit.theta.analysis.algorithm.PorLogger
 import hu.bme.mit.theta.analysis.algorithm.SporLts
 import hu.bme.mit.theta.core.decl.Decl
 import hu.bme.mit.theta.core.decl.VarDecl
@@ -40,6 +41,11 @@ open class XcfaSporLts(protected val xcfa: XCFA) : SporLts<XcfaState<*>, XcfaAct
 
     override fun getAllEnabledActionsFor(state: XcfaState<*>): Collection<XcfaAction> =
         simpleXcfaLts.getEnabledActionsFor(state)
+
+    override fun getEnabledActionsFor(state: XcfaState<*>): Set<XcfaAction> {
+        if (PorLogger.dependencyRelationSize.size < PorLogger.preservedStates.size) dependencyRelationSize(xcfa, null)
+        return super.getEnabledActionsFor(state)
+    }
 
     override fun getPersistentSetFirstActions(allEnabledActions: Collection<XcfaAction>): Collection<Collection<XcfaAction>> {
         val enabledActionsByProcess = allEnabledActions.groupBy(XcfaAction::pid)
