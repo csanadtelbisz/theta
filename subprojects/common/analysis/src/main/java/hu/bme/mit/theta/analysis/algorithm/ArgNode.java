@@ -278,11 +278,7 @@ public final class ArgNode<S extends State, A extends Action> {
 		if (this == o) return true;
 		if (o == null || getClass() != o.getClass()) return false;
 		ArgNode<?, ?> argNode = (ArgNode<?, ?>) o;
-		return depth == argNode.depth &&
-				state.equals(argNode.state) &&
-				coveringNode.equals(argNode.coveringNode) &&
-				Set.copyOf(outEdges).equals(Set.copyOf(argNode.outEdges)) &&
-				target == argNode.target;
+		return id == argNode.id;
 	}
 
 	@Override
