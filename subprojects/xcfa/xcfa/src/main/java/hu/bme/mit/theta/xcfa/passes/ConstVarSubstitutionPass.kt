@@ -2,6 +2,7 @@ package hu.bme.mit.theta.xcfa.passes
 
 import hu.bme.mit.theta.analysis.stmtoptimizer.StmtSimplifier
 import hu.bme.mit.theta.core.decl.VarDecl
+import hu.bme.mit.theta.core.model.ImmutableValuation
 import hu.bme.mit.theta.core.model.MutableValuation
 import hu.bme.mit.theta.core.stmt.AssignStmt
 import hu.bme.mit.theta.core.type.Expr
@@ -45,33 +46,21 @@ class ConstVarSubstitutionPass : ProcedurePass {
         return vars.isEmpty()
     }
 
-    private fun XcfaLabel.simplify(valuation: MutableValuation): XcfaLabel {
-        return when (this) {
-            is StmtLabel -> {
-                val simplified = StmtSimplifier.simplifyStmt(valuation, stmt)
-                StmtLabel(simplified, this.choiceType, this.metadata)
-            }
-
-            is SequenceLabel -> {
-                SequenceLabel(labels.map { it.simplify(valuation) }, this.metadata)
-            }
-
-            is NondetLabel -> {
-                NondetLabel(labels.map { it.simplify(valuation) }.toSet(), this.metadata)
-            }
-
-            else -> this
-        }
+    private fun XcfaLabel.simplify(valuation: MutableValuation): XcfaLabel = when (this) {
+        is StmtLabel -> StmtLabel(StmtSimplifier.simplifyStmt(valuation, stmt), this.choiceType, this.metadata)
+        is SequenceLabel -> SequenceLabel(labels.map { it.simplify(valuation) }, this.metadata)
+        is NondetLabel -> NondetLabel(labels.map { it.simplify(valuation) }.toSet(), this.metadata)
+        else -> this
     }
 
-    override fun run(builder: XcfaProcedureBuilder): XcfaProcedureBuilder {
+    override fun run(builder: XcfaProcedureBuilder) = builder.apply {
         val labelToEdge = mutableMapOf<XcfaLabel, XcfaEdge>()
-        builder.parent.getProcedures()
+        parent.getProcedures()
             .flatMap { it.getEdges() }
-            .map {
-                val varAccesses = it.label.collectVarsWithLabels()
-                varAccesses.flatMap { v -> v.value }.forEach { label -> labelToEdge[label] = it }
-                varAccesses
+            .map { edge ->
+                edge.label.collectVarsWithLabels().also { varAccesses ->
+                    varAccesses.values.flatten().forEach { labelToEdge[it] = edge }
+                }
             }
             .filter { it.isNotEmpty() }.merge()
             .filter {
@@ -81,21 +70,16 @@ class ConstVarSubstitutionPass : ProcedurePass {
             .forEach { (v, usages) ->
                 val assignment = ((usages.find { it.isWrite(v) }!! as StmtLabel).stmt as AssignStmt<*>)
                 val valuation = MutableValuation().apply {
-                    put(assignment.varDecl, assignment.expr.eval(MutableValuation()))
+                    put(assignment.varDecl, assignment.expr.eval(ImmutableValuation.empty()))
                 }
                 for (usage in usages) {
-                    val originalEdge = labelToEdge[usage]!!
-                    if (!usage.isWrite(v) && builder.getEdges().contains(originalEdge)) {
-                        val edge = XcfaEdge(
-                            source = originalEdge.source,
-                            target = originalEdge.target,
-                            label = originalEdge.label.simplify(valuation)
-                        )
-                        builder.removeEdge(originalEdge)
-                        builder.addEdge(edge)
+                    val original = labelToEdge[usage]!!
+                    if (!usage.isWrite(v) && getEdges().contains(original)) {
+                        val edge = XcfaEdge(original.source, original.target, original.label.simplify(valuation))
+                        removeEdge(original)
+                        addEdge(edge)
                     }
                 }
             }
-        return builder
     }
 }
