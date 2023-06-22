@@ -25,6 +25,7 @@ class CPasses(checkOverflow: Boolean) : ProcedurePassManager(listOf(
         // removing redundant elements
         EmptyEdgeRemovalPass(),
         UnusedLocRemovalPass(),
+        ConstVarSubstitutionPass(),
         // optimizing
         SimplifyExprsPass(),
         // handling intrinsics
