@@ -26,7 +26,6 @@ class CPasses(checkOverflow: Boolean) : ProcedurePassManager(listOf(
         EmptyEdgeRemovalPass(),
         UnusedLocRemovalPass(),
         // optimizing
-        ConstVarSubstitutionPass(),
         SimplifyExprsPass(),
         // handling intrinsics
         ErrorLocationPass(checkOverflow),
