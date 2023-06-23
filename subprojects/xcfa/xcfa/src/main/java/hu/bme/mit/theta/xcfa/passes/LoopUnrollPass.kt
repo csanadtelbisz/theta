@@ -17,6 +17,11 @@ import hu.bme.mit.theta.xcfa.isWritten
 import hu.bme.mit.theta.xcfa.model.*
 import java.util.*
 
+/**
+ * Unrolls loops where the number of loop executions can be determined statically.
+ * The UNROLL_LIMIT refers to the number of loop executions: loops that are executed more times than this limit
+ * are not unrolled.
+ */
 class LoopUnrollPass : ProcedurePass {
 
     companion object {
@@ -68,7 +73,7 @@ class LoopUnrollPass : ProcedurePass {
             }
         }
 
-        private fun copyOn(builder: XcfaProcedureBuilder, startLocation: XcfaLocation, index: Int): XcfaLocation {
+        private fun copyBody(builder: XcfaProcedureBuilder, startLocation: XcfaLocation, index: Int): XcfaLocation {
             val locs = loopLocs.associateWith {
                 val loc = XcfaLocation("loop${index}_${it.name}")
                 builder.addLoc(loc)
@@ -95,7 +100,7 @@ class LoopUnrollPass : ProcedurePass {
 
             var startLocation = loopStart
             for (i in 0 until count) {
-                startLocation = copyOn(builder, startLocation, i)
+                startLocation = copyBody(builder, startLocation, i)
             }
 
             builder.addEdge(
