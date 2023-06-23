@@ -34,6 +34,7 @@ class CPasses(checkOverflow: Boolean) : ProcedurePassManager(listOf(
         SvCompIntrinsicsPass(),
         FpFunctionsToExprsPass(),
         PthreadFunctionsPass(),
+        LoopUnrollPass(),
         // trying to inline procedures
         InlineProceduresPass(),
         RemoveDeadEnds(),

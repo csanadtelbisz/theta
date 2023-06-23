@@ -171,6 +171,8 @@ class XcfaCli(private val args: Array<String>) {
 
         if(randomSeed >= 0) XcfaDporLts.random = Random(randomSeed)
 
+        registerAllSolverManagers(solverHome, logger)
+
         val xcfa = try {
             val stream = FileInputStream(input!!)
             val xcfaFromC = getXcfaFromC(stream, explicitProperty == ErrorDetection.OVERFLOW)
@@ -208,7 +210,6 @@ class XcfaCli(private val args: Array<String>) {
             logger.write(Logger.Level.RESULT, "ParsingResult Success")
             return
         }
-        registerAllSolverManagers(solverHome, logger)
 
         val safetyResult: SafetyResult<*, *> =
                 when (strategy) {

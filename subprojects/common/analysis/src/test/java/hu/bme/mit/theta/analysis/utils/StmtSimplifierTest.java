@@ -16,7 +16,7 @@ import java.util.Collection;
 import java.util.Set;
 
 import com.google.common.collect.ImmutableList;
-import hu.bme.mit.theta.analysis.stmtoptimizer.StmtSimplifier;
+import hu.bme.mit.theta.core.utils.StmtSimplifier;
 import hu.bme.mit.theta.core.stmt.NonDetStmt;
 import hu.bme.mit.theta.core.stmt.SequenceStmt;
 import org.junit.Test;
