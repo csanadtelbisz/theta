@@ -44,6 +44,7 @@ import hu.bme.mit.theta.xcfa.cli.utils.XcfaWitnessWriter
 import hu.bme.mit.theta.xcfa.cli.witnesses.XcfaTraceConcretizer
 import hu.bme.mit.theta.xcfa.model.toDot
 import hu.bme.mit.theta.xcfa.passes.LbePass
+import hu.bme.mit.theta.xcfa.passes.LoopUnrollPass
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileReader
@@ -68,6 +69,9 @@ class XcfaCli(private val args: Array<String>) {
 
     @Parameter(names = ["--lbe"], description = "Level of LBE (NO_LBE, LBE_LOCAL, LBE_SEQ, LBE_FULL)")
     var lbeLevel: LbePass.LbeLevel = LbePass.LbeLevel.LBE_SEQ
+
+    @Parameter(names = ["--unroll"], description = "Max number of loop iterations to unroll")
+    var loopUnroll: Int = 50
 
     //////////// backend options ////////////
     @Parameter(names = ["--backend"], description = "Backend analysis to use")
@@ -164,9 +168,10 @@ class XcfaCli(private val args: Array<String>) {
 
         /// Starting frontend
         val swFrontend = Stopwatch.createStarted()
-        LbePass.level = lbeLevel
-
         registerAllSolverManagers(solverHome, logger)
+
+        LbePass.level = lbeLevel
+        LoopUnrollPass.UNROLL_LIMIT = loopUnroll
 
         val xcfa = try {
             val stream = FileInputStream(input!!)

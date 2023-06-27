@@ -25,7 +25,7 @@ import java.util.*
 class LoopUnrollPass : ProcedurePass {
 
     companion object {
-        var UNROLL_LIMIT = 20
+        var UNROLL_LIMIT = 50
 
         private val solver: Solver = SolverManager.resolveSolverFactory("Z3").createSolver()
     }
