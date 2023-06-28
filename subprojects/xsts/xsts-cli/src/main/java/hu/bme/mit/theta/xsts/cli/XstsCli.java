@@ -7,7 +7,6 @@ import com.google.common.base.Stopwatch;
 import hu.bme.mit.theta.analysis.Trace;
 import hu.bme.mit.theta.analysis.algorithm.SafetyResult;
 import hu.bme.mit.theta.analysis.algorithm.cegar.CegarStatistics;
-import hu.bme.mit.theta.analysis.algorithm.runtimecheck.ArgCexCheckHandler;
 import hu.bme.mit.theta.analysis.expr.refinement.PruneStrategy;
 import hu.bme.mit.theta.analysis.utils.ArgVisualizer;
 import hu.bme.mit.theta.analysis.utils.TraceVisualizer;
@@ -40,6 +39,7 @@ import hu.bme.mit.theta.xsts.pnml.elements.PnmlNet;
 
 import java.io.*;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -121,6 +121,9 @@ public class XstsCli {
 	@Parameter(names = "--no-stuck-check")
 	boolean noStuckCheck = false;
 
+	@Parameter
+	ArrayList<String> remainingFlags = new ArrayList<>();
+
 	private Logger logger;
 
 	public XstsCli(final String[] args) {
@@ -194,7 +197,7 @@ public class XstsCli {
 		writer.newRow();
 	}
 
-	private XSTS loadModel() throws Exception {
+	public XSTS loadModel() throws Exception {
 		InputStream propStream = null;
 		try {
 			if (property.endsWith(".prop")) propStream = new FileInputStream(property);
@@ -219,11 +222,11 @@ public class XstsCli {
 
 	private XstsConfig<?, ?, ?> buildConfiguration(final XSTS xsts) throws Exception {
 		// set up stopping analysis if it is stuck on same ARGs and precisions
-		if (noStuckCheck) {
+		/*if (noStuckCheck) {
 			ArgCexCheckHandler.instance.setArgCexCheck(false, false);
 		} else {
 			ArgCexCheckHandler.instance.setArgCexCheck(true, refinement.equals(Refinement.MULTI_SEQ));
-		}
+		}*/
 
 		registerAllSolverManagers(solverHome, logger);
 		SolverFactory abstractionSolverFactory = SolverManager.resolveSolverFactory(abstractionSolver);

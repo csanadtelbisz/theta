@@ -15,10 +15,7 @@
  */
 package hu.bme.mit.theta.xcfa.passes
 
-import hu.bme.mit.theta.xcfa.model.NopLabel
-import hu.bme.mit.theta.xcfa.model.XcfaEdge
-import hu.bme.mit.theta.xcfa.model.XcfaLocation
-import hu.bme.mit.theta.xcfa.model.XcfaProcedureBuilder
+import hu.bme.mit.theta.xcfa.model.*
 import java.util.stream.Collectors
 
 class EliminateSelfLoops : ProcedurePass {
@@ -27,14 +24,14 @@ class EliminateSelfLoops : ProcedurePass {
         for (selfLoop in selfLoops) {
             builder.removeEdge(selfLoop)
             val source = selfLoop.source
-            val target: XcfaLocation = XcfaLocation(source.name + "_" + XcfaLocation.uniqueCounter())
+            val target = XcfaLocation(source.name + "_" + XcfaLocation.uniqueCounter())
             builder.addLoc(target)
             for (outgoingEdge in LinkedHashSet(source.outgoingEdges)) {
                 builder.removeEdge(outgoingEdge)
                 builder.addEdge(XcfaEdge(target, outgoingEdge.target, outgoingEdge.label))
             }
             builder.addEdge(XcfaEdge(source, target, selfLoop.label))
-            builder.addEdge(XcfaEdge(target, source, NopLabel))
+            builder.addEdge(XcfaEdge(target, source, SequenceLabel(listOf())))
         }
         builder.metaData["noSelfLoops"] = Unit
         return builder

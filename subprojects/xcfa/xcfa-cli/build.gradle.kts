@@ -15,6 +15,8 @@ dependencies {
     implementation(project(":theta-solver"))
     implementation(project(":theta-c-frontend"))
     implementation(project(":theta-grammar"))
+    implementation(project(":theta-xsts"))
+    implementation(project(":theta-xsts-cli"))
     implementation("com.zaxxer:nuprocess:2.0.2")
     runtimeOnly("org.jetbrains.kotlin:kotlin-scripting-jsr223:1.7.10")
 }

@@ -39,12 +39,12 @@ import hu.bme.mit.theta.solver.smtlib.SmtLibSolverManager
 import hu.bme.mit.theta.xcfa.analysis.ErrorDetection
 import hu.bme.mit.theta.xcfa.analysis.XcfaAction
 import hu.bme.mit.theta.xcfa.analysis.XcfaState
-import hu.bme.mit.theta.xcfa.analysis.por.XcfaDporLts
 import hu.bme.mit.theta.xcfa.cli.utils.XcfaWitnessWriter
 import hu.bme.mit.theta.xcfa.cli.witnesses.XcfaTraceConcretizer
 import hu.bme.mit.theta.xcfa.model.toDot
 import hu.bme.mit.theta.xcfa.passes.LbePass
 import hu.bme.mit.theta.xcfa.passes.LoopUnrollPass
+import hu.bme.mit.theta.xsts.cli.XstsCli
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileReader
@@ -54,7 +54,6 @@ import javax.script.Bindings
 import javax.script.ScriptEngine
 import javax.script.ScriptEngineManager
 import javax.script.SimpleBindings
-import kotlin.random.Random
 import kotlin.system.exitProcess
 
 
@@ -66,6 +65,9 @@ class XcfaCli(private val args: Array<String>) {
 
     @Parameter(names = ["--property"], description = "Path of the property file")
     var property: File? = null
+
+    @Parameter(names = ["--modeltype"], description = "Model type: C/XSTS")
+    var modelType = "C"
 
     @Parameter(names = ["--lbe"], description = "Level of LBE (NO_LBE, LBE_LOCAL, LBE_SEQ, LBE_FULL)")
     var lbeLevel: LbePass.LbeLevel = LbePass.LbeLevel.LBE_SEQ
@@ -133,7 +135,7 @@ class XcfaCli(private val args: Array<String>) {
             exitProcess(ExitCodes.INVALID_PARAM.code)
         }
         val explicitProperty: ErrorDetection =
-                if(property != null) {
+                if(property != null && modelType != "XSTS") {
                     remainingFlags.add("--error-detection")
                     if(property!!.name.endsWith("unreach-call.prp")) {
                         remainingFlags.add(ErrorDetection.ERROR_LOCATION.toString())
@@ -174,16 +176,30 @@ class XcfaCli(private val args: Array<String>) {
         LoopUnrollPass.UNROLL_LIMIT = loopUnroll
 
         val xcfa = try {
-            val stream = FileInputStream(input!!)
-            val xcfaFromC = getXcfaFromC(stream, explicitProperty == ErrorDetection.OVERFLOW)
-            logger.write(Logger.Level.INFO, "Frontend finished: ${xcfaFromC.name}  (in ${swFrontend.elapsed(TimeUnit.MILLISECONDS)} ms)\n")
-            logger.write(Logger.Level.RESULT, "Arithmetic: ${BitwiseChecker.getBitwiseOption()}\n")
-            xcfaFromC
+            when (modelType) {
+                "C" -> {
+                    val stream = FileInputStream(input!!)
+                    val xcfaFromC = getXcfaFromC(stream, explicitProperty == ErrorDetection.OVERFLOW)
+                    xcfaFromC
+                }
+                "XSTS" -> {
+                    ArchitectureConfig.multiThreading = true
+                    val xstsCli = XstsCli(args)
+                    val modifiedArgs = args.copyOf().apply {
+                        this[indexOf("--input")] = "--model"
+                    }
+                    JCommander.newBuilder().addObject(xstsCli).programName(JAR_NAME).build().parse(*modifiedArgs)
+                    getXcfaFromXsts(xstsCli.loadModel())
+                }
+                else -> throw IllegalArgumentException("Unknown model type.")
+            }
         } catch (e: Exception) {
             if (stacktrace) e.printStackTrace();
             logger.write(Logger.Level.RESULT, "Frontend failed!\n")
             exitProcess(ExitCodes.FRONTEND_FAILED.code)
         }
+        logger.write(Logger.Level.INFO, "Frontend finished: ${xcfa.name}  (in ${swFrontend.elapsed(TimeUnit.MILLISECONDS)} ms)\n")
+        logger.write(Logger.Level.RESULT, "Arithmetic: ${BitwiseChecker.getBitwiseOption()}\n")
         swFrontend.reset().start()
 
         val gsonForOutput = getGson()

@@ -28,12 +28,6 @@ import hu.bme.mit.theta.xcfa.getFlatLabels
 import hu.bme.mit.theta.xcfa.model.*
 import java.util.*
 
-fun label2edge(edge: XcfaEdge, label: XcfaLabel) {
-    val source = edge.source
-    val target = edge.target
-
-}
-
 /**
  * XcfaEdge must be in a `deterministic` ProcedureBuilder
  */
