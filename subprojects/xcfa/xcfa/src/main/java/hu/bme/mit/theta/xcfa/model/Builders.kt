@@ -50,7 +50,7 @@ class XcfaBuilder @JvmOverloads constructor(
     }
 
     fun addEntryPoint(toAdd: XcfaProcedureBuilder, params: List<Expr<*>>) {
-        procedures.add(toAdd)
+        addProcedure(toAdd)
         initProcedures.add(Pair(toAdd, params))
     }
 }
