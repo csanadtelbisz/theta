@@ -3,21 +3,12 @@ package hu.bme.mit.theta.xcfa.cli
 import hu.bme.mit.theta.core.decl.Decls
 import hu.bme.mit.theta.core.decl.VarDecl
 import hu.bme.mit.theta.core.stmt.*
-import hu.bme.mit.theta.core.type.Expr
-import hu.bme.mit.theta.core.type.abstracttype.EqExpr
 import hu.bme.mit.theta.core.type.abstracttype.LeqExpr
-import hu.bme.mit.theta.core.type.anytype.RefExpr
-import hu.bme.mit.theta.core.type.booltype.AndExpr
 import hu.bme.mit.theta.core.type.booltype.BoolExprs
 import hu.bme.mit.theta.core.type.booltype.BoolLitExpr
 import hu.bme.mit.theta.core.type.booltype.BoolType
-import hu.bme.mit.theta.core.type.booltype.FalseExpr
-import hu.bme.mit.theta.core.type.booltype.NotExpr
-import hu.bme.mit.theta.core.type.booltype.OrExpr
-import hu.bme.mit.theta.core.type.booltype.TrueExpr
 import hu.bme.mit.theta.core.type.inttype.IntLitExpr
 import hu.bme.mit.theta.core.type.inttype.IntType
-import hu.bme.mit.theta.core.utils.TypeUtils.cast
 import hu.bme.mit.theta.xcfa.model.*
 import hu.bme.mit.theta.xcfa.passes.*
 import hu.bme.mit.theta.xsts.XSTS
@@ -51,19 +42,11 @@ fun getXcfaFromXsts(xsts: XSTS): XCFA {
         procedure.addEdge(XcfaEdge(loopLoc, loopLoc, processLabel))
     }
 
-    // Initial assignments, init transition
-
-//    val initStmts = xsts.initFormula.toXcfaLabels()
-//    val unassignedVars = builder.getVars().map { it.wrappedVar } subtract
-//            initStmts.filter { it is StmtLabel && it.stmt is AssignStmt<*> }
-//                .map { ((it as StmtLabel).stmt as AssignStmt<*>).varDecl }.toSet()
-//    unassignedVars.forEach { initStmts.add(StmtLabel(stmt = HavocStmt.of(it), metadata = EmptyMetaData)) }
-    val initStmts = mutableListOf<XcfaLabel>(StmtLabel(AssumeStmt.of(xsts.initFormula), metadata = EmptyMetaData))
-
-    // Entry procedure
+    // Entry procedure: initial assignments, init transition
 
     val procedures = builder.getProcedures().toList()
     val main = getProcedureBuilder(builder, "main", passes, true)
+    val initStmts = mutableListOf<XcfaLabel>(StmtLabel(AssumeStmt.of(xsts.initFormula), metadata = EmptyMetaData))
     procedures.forEach { p ->
         val pidVar = Decls.Var("main::thread_${p.name}", IntType.getInstance())
         main.addVar(pidVar)
@@ -103,33 +86,6 @@ private fun getProcedureBuilder(builder: XcfaBuilder, name: String, passes: Proc
     procedure.addParam(toAdd, ParamDirection.OUT)
     procedure.createInitLoc()
     return procedure
-}
-
-private fun Expr<BoolType>.toXcfaLabels(): MutableList<XcfaLabel> {
-    return when (this) {
-        is AndExpr -> ops.flatMap { it.toXcfaLabels() }.toMutableList()
-
-        is EqExpr<*> -> {
-            val type = leftOp.type
-            mutableListOf(
-                StmtLabel(
-                    stmt = AssignStmt.of(cast((leftOp as RefExpr).decl as VarDecl<*>, type), cast(rightOp, type)),
-                    metadata = EmptyMetaData
-                )
-            )
-        }
-
-        is NotExpr -> {
-            mutableListOf(
-                StmtLabel(
-                    stmt = AssignStmt.of(cast((op as RefExpr).decl as VarDecl<*>, type), FalseExpr.getInstance()),
-                    metadata = EmptyMetaData
-                )
-            )
-        }
-
-        else -> throw UnsupportedOperationException("Unsupported XSTS formula.")
-    }
 }
 
 private fun normalize(stmt: Stmt): NondetLabel {
