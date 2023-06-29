@@ -11,12 +11,15 @@ import hu.bme.mit.theta.core.type.booltype.AndExpr
 import hu.bme.mit.theta.core.type.booltype.BoolExprs
 import hu.bme.mit.theta.core.type.booltype.BoolLitExpr
 import hu.bme.mit.theta.core.type.booltype.BoolType
+import hu.bme.mit.theta.core.type.booltype.FalseExpr
+import hu.bme.mit.theta.core.type.booltype.NotExpr
+import hu.bme.mit.theta.core.type.booltype.OrExpr
+import hu.bme.mit.theta.core.type.booltype.TrueExpr
 import hu.bme.mit.theta.core.type.inttype.IntLitExpr
 import hu.bme.mit.theta.core.type.inttype.IntType
 import hu.bme.mit.theta.core.utils.TypeUtils.cast
 import hu.bme.mit.theta.xcfa.model.*
-import hu.bme.mit.theta.xcfa.passes.CPasses
-import hu.bme.mit.theta.xcfa.passes.ProcedurePassManager
+import hu.bme.mit.theta.xcfa.passes.*
 import hu.bme.mit.theta.xsts.XSTS
 import java.math.BigInteger
 
@@ -37,30 +40,25 @@ fun getXcfaFromXsts(xsts: XSTS): XCFA {
 
     // Transitions to processes
 
-    val passes = CPasses(false)
-    xsts.env.stmts.forEachIndexed { envI, env ->
-        xsts.tran.stmts.forEachIndexed { tranI, tran ->
-            val name = "env${envI}_tran$tranI"
-            val procedure = getProcedureBuilder(builder, name, passes)
-
-            val loopLoc = XcfaLocation("${name}_loop")
-            procedure.addLoc(loopLoc)
-            procedure.addEdge(XcfaEdge(procedure.initLoc, loopLoc, SequenceLabel(listOf())))
-
-            val stmts = (if (env is SkipStmt) tran.flatStmts else env.flatStmts + tran.flatStmts)
-                .map { StmtLabel(it, metadata = EmptyMetaData) }.toMutableList()
-
-            procedure.addEdge(XcfaEdge(loopLoc, loopLoc, SequenceLabel(stmts)))
-        }
+    val passes = XstsPasses()
+    val processes = normalize(SequenceStmt.of(listOf(xsts.env, xsts.tran)))
+    processes.labels.forEachIndexed { i, processLabel ->
+        val name = "proc$i"
+        val procedure = getProcedureBuilder(builder, name, passes)
+        val loopLoc = XcfaLocation("${name}_loop")
+        procedure.addLoc(loopLoc)
+        procedure.addEdge(XcfaEdge(procedure.initLoc, loopLoc, SequenceLabel(listOf())))
+        procedure.addEdge(XcfaEdge(loopLoc, loopLoc, processLabel))
     }
 
-    // Initial assignments
+    // Initial assignments, init transition
 
-    val initStmts = xsts.initFormula.toXcfaLabels()
-    val unassignedVars = builder.getVars().map { it.wrappedVar } subtract
-            initStmts.filter { it is StmtLabel && it.stmt is AssignStmt<*> }
-                .map { ((it as StmtLabel).stmt as AssignStmt<*>).varDecl }.toSet()
-    unassignedVars.forEach { initStmts.add(StmtLabel(stmt = HavocStmt.of(it), metadata = EmptyMetaData)) }
+//    val initStmts = xsts.initFormula.toXcfaLabels()
+//    val unassignedVars = builder.getVars().map { it.wrappedVar } subtract
+//            initStmts.filter { it is StmtLabel && it.stmt is AssignStmt<*> }
+//                .map { ((it as StmtLabel).stmt as AssignStmt<*>).varDecl }.toSet()
+//    unassignedVars.forEach { initStmts.add(StmtLabel(stmt = HavocStmt.of(it), metadata = EmptyMetaData)) }
+    val initStmts = mutableListOf<XcfaLabel>(StmtLabel(AssumeStmt.of(xsts.initFormula), metadata = EmptyMetaData))
 
     // Entry procedure
 
@@ -71,9 +69,12 @@ fun getXcfaFromXsts(xsts: XSTS): XCFA {
         main.addVar(pidVar)
         initStmts.add(StartLabel(p.name, listOf(), pidVar, EmptyMetaData))
     }
+    val endInitFormula = XcfaLocation("main_end_init_formula")
+    main.addLoc(endInitFormula)
+    main.addEdge(XcfaEdge(main.initLoc, endInitFormula, SequenceLabel(initStmts)))
     val endInit = XcfaLocation("main_end_init")
     main.addLoc(endInit)
-    main.addEdge(XcfaEdge(main.initLoc, endInit, SequenceLabel(initStmts)))
+    main.addEdge(XcfaEdge(endInitFormula, endInit, normalize(xsts.init)))
 
     main.createErrorLoc()
     if (propertyIsSafe) {
@@ -81,10 +82,10 @@ fun getXcfaFromXsts(xsts: XSTS): XCFA {
             LeqExpr.create2(it.wrappedVar.ref, IntLitExpr.of(BigInteger.valueOf(1)))
         }))
         val errorLabel = StmtLabel(AssumeStmt.of(errorCond), metadata = EmptyMetaData)
-        main.addEdge(XcfaEdge(endInit, main.errorLoc.get(), errorLabel))
+        main.addEdge(XcfaEdge(endInit, main.errorLoc.get(), SequenceLabel(listOf(errorLabel))))
     } else {
         val errorLabel = StmtLabel(AssumeStmt.of(BoolExprs.Not(xsts.prop)), metadata = EmptyMetaData)
-        main.addEdge(XcfaEdge(endInit, main.errorLoc.get(), errorLabel))
+        main.addEdge(XcfaEdge(endInit, main.errorLoc.get(), SequenceLabel(listOf(errorLabel))))
     }
 
     return builder.build()
@@ -92,6 +93,7 @@ fun getXcfaFromXsts(xsts: XSTS): XCFA {
 
 private fun getProcedureBuilder(builder: XcfaBuilder, name: String, passes: ProcedurePassManager, init: Boolean = false): XcfaProcedureBuilder {
     val procedure = XcfaProcedureBuilder(name, passes)
+    procedure.metaData["normal"] = Unit
     if (init) {
         builder.addEntryPoint(procedure, listOf())
     } else {
@@ -117,13 +119,73 @@ private fun Expr<BoolType>.toXcfaLabels(): MutableList<XcfaLabel> {
             )
         }
 
+        is NotExpr -> {
+            mutableListOf(
+                StmtLabel(
+                    stmt = AssignStmt.of(cast((op as RefExpr).decl as VarDecl<*>, type), FalseExpr.getInstance()),
+                    metadata = EmptyMetaData
+                )
+            )
+        }
+
         else -> throw UnsupportedOperationException("Unsupported XSTS formula.")
     }
 }
 
-private val Stmt.flatStmts: List<Stmt>
-    get() = when (this) {
-        is SequenceStmt -> stmts
-        is NonDetStmt -> throw UnsupportedOperationException("Unflattened XSTS transitions are not supported.")
-        else -> listOf(this)
+private fun normalize(stmt: Stmt): NondetLabel {
+    val collector = mutableListOf<MutableList<XcfaLabel>>()
+    collector.add(mutableListOf())
+    normalize(stmt, collector)
+    return NondetLabel(collector.map { SequenceLabel(it) }.toSet())
+}
+
+private fun normalize(stmt: Stmt, collector: MutableList<MutableList<XcfaLabel>>) {
+    when (stmt) {
+        is SequenceStmt -> stmt.stmts.forEach { normalize(it, collector) }
+        is NonDetStmt -> {
+            val newCollector = mutableListOf<MutableList<XcfaLabel>>()
+            stmt.stmts.forEach { nondetBranch ->
+                val copy = collector.copy()
+                normalize(nondetBranch, copy)
+                newCollector.addAll(copy)
+            }
+            collector.clear()
+            collector.addAll(newCollector)
+        }
+
+        is SkipStmt -> {}
+        else -> collector.forEach { it.add(StmtLabel(stmt, metadata = EmptyMetaData)) }
     }
+}
+
+private fun MutableList<MutableList<XcfaLabel>>.copy() = map { it.toMutableList() }.toMutableList()
+
+private class XstsPasses : ProcedurePassManager(listOf(
+    // formatting
+    //NormalizePass(),
+    DeterministicPass(),
+    // removing redundant elements
+    EmptyEdgeRemovalPass(),
+    UnusedLocRemovalPass(),
+    // optimizing
+    SimplifyExprsPass(),
+    // handling intrinsics
+    //ErrorLocationPass(checkOverflow),
+    //FinalLocationPass(checkOverflow),
+    //SvCompIntrinsicsPass(),
+    //FpFunctionsToExprsPass(),
+    //PthreadFunctionsPass(),
+    LoopUnrollPass(),
+    // trying to inline procedures
+    //InlineProceduresPass(),
+    RemoveDeadEnds(),
+    EliminateSelfLoops(),
+    // handling remaining function calls
+    NondetFunctionPass(),
+    LbePass(),
+    NormalizePass(), // needed after lbe, TODO
+    DeterministicPass(), // needed after lbe, TODO
+    HavocPromotionAndRange(),
+    // Final cleanup
+    UnusedVarPass(),
+))
