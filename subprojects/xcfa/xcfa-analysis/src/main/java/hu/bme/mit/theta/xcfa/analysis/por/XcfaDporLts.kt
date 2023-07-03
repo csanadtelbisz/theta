@@ -268,8 +268,7 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
                 releasedMutexes.forEach { m -> last.mutexLocks[m]?.let { stack[it].mutexLocks.remove(m) } }
             }
 
-            val isCoveringNode = item.parent.get() != last.node
-            val isVirtualExploration = virtualLimit < stack.size || isCoveringNode
+            val isVirtualExploration = virtualLimit < stack.size || item.parent.get() != last.node
             val newSleep = if (isVirtualExploration) {
                 item.state.sleep
             } else {
@@ -301,13 +300,11 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
             stack.push(
                 StackItem(
                     node = item,
-                    processLastAction = if (!isCoveringNode) newProcessLastAction else last.processLastAction.toMutableMap(),
+                    processLastAction = newProcessLastAction,
                     lastDependents = last.lastDependents.toMutableMap().apply {
-                        if (!isCoveringNode) {
-                            this[process] = newLastDependents
-                            newProcesses.forEach {
-                                this[it] = max(this[it] ?: mutableMapOf(), newLastDependents)
-                            }
+                        this[process] = newLastDependents
+                        newProcesses.forEach {
+                            this[it] = max(this[it] ?: mutableMapOf(), newLastDependents)
                         }
                     },
                     mutexLocks = last.mutexLocks.toMutableMap().apply {
@@ -406,8 +403,8 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
          * Returns true when the virtual exploration cannot detect any more races relevant in the "real" exploration (the part of the search stack before the first covering node).
          */
         private fun noInfluenceOnRealExploration(realStackSize: Int) = last.processLastAction.keys.all { process ->
-            last.lastDependents.containsKey(process) && last.lastDependents[process]!!.all { (otherProcess, index) ->
-                index >= realStackSize || index >= last.processLastAction[otherProcess]!!
+            last.lastDependents.containsKey(process) && last.lastDependents[process]!!.all { (_, index) ->
+                index >= realStackSize
             }
         }
     }
