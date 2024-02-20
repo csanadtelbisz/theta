@@ -37,6 +37,7 @@ fun getChecker(xcfa: XCFA, mcm: MCM, config: XcfaConfig<*, *>, parseContext: Par
         when (config.backendConfig.backend) {
             Backend.CEGAR -> getCegarChecker(xcfa, mcm, config, logger)
             Backend.BOUNDED -> getBoundedChecker(xcfa, mcm, config, logger)
+            Backend.ABSTRACT_BOUNDED -> getAbstractBoundedChecker(xcfa, mcm, config, logger)
             Backend.LAZY -> TODO()
             Backend.PORTFOLIO -> getPortfolioChecker(xcfa, mcm, config, parseContext, logger, uniqueLogger)
             Backend.NONE -> SafetyChecker<XcfaState<*>, XcfaAction, XcfaPrec<*>> { _ -> SafetyResult.unknown() }

@@ -29,6 +29,7 @@ import hu.bme.mit.theta.common.logging.Logger;
 import hu.bme.mit.theta.common.logging.Logger.Level;
 
 import java.util.Optional;
+import java.util.function.Consumer;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -65,6 +66,15 @@ public class SingleExprTraceRefiner<S extends ExprState, A extends ExprAction, P
         this.logger = checkNotNull(logger);
     }
 
+    protected SingleExprTraceRefiner(final ExprTraceChecker<R> exprTraceChecker,
+                                     final PrecRefiner<S, A, P, R> precRefiner, final Logger logger) {
+        this.exprTraceChecker = checkNotNull(exprTraceChecker);
+        this.precRefiner = checkNotNull(precRefiner);
+        this.pruneStrategy = null;
+        this.nodePruner = null;
+        this.logger = checkNotNull(logger);
+    }
+
     public static <S extends ExprState, A extends ExprAction, P extends Prec, R extends Refutation> SingleExprTraceRefiner<S, A, P, R> create(
             final ExprTraceChecker<R> exprTraceChecker, final PrecRefiner<S, A, P, R> precRefiner,
             final PruneStrategy pruneStrategy, final Logger logger) {
@@ -77,6 +87,12 @@ public class SingleExprTraceRefiner<S extends ExprState, A extends ExprAction, P
         return new SingleExprTraceRefiner<>(exprTraceChecker, precRefiner, pruneStrategy, logger, nodePruner);
     }
 
+    public static <S extends ExprState, A extends ExprAction, P extends Prec, R extends Refutation> SingleExprTraceRefiner<S, A, P, R> create(
+            final ExprTraceChecker<R> exprTraceChecker, final PrecRefiner<S, A, P, R> precRefiner,
+            final Logger logger) {
+        return new SingleExprTraceRefiner<>(exprTraceChecker, precRefiner, logger);
+    }
+
     @Override
     public RefinerResult<S, A, P> refine(final ARG<S, A> arg, final P prec) {
         checkNotNull(arg);
@@ -86,22 +102,7 @@ public class SingleExprTraceRefiner<S extends ExprState, A extends ExprAction, P
         Optional<ArgTrace<S, A>> optionalNewCex = arg.getCexs().findFirst();
         final ArgTrace<S, A> cexToConcretize = optionalNewCex.get();
 
-        final Trace<S, A> traceToConcretize = cexToConcretize.toTrace();
-        logger.write(Level.INFO, "|  |  Trace length: %d%n", traceToConcretize.length());
-        logger.write(Level.DETAIL, "|  |  Trace: %s%n", traceToConcretize);
-
-        logger.write(Level.SUBSTEP, "|  |  Checking trace...");
-        final ExprTraceStatus<R> cexStatus = exprTraceChecker.check(traceToConcretize);
-        logger.write(Level.SUBSTEP, "done, result: %s%n", cexStatus);
-
-        assert cexStatus.isFeasible() || cexStatus.isInfeasible() : "Unknown CEX status";
-
-        if (cexStatus.isFeasible()) {
-            return RefinerResult.unsafe(traceToConcretize);
-        } else {
-            final R refutation = cexStatus.asInfeasible().getRefutation();
-            logger.write(Level.DETAIL, "|  |  |  Refutation: %s%n", refutation);
-            final P refinedPrec = precRefiner.refine(prec, traceToConcretize, refutation);
+        return refine(cexToConcretize.toTrace(), prec, refutation -> {
             final int pruneIndex = refutation.getPruneIndex();
             assert 0 <= pruneIndex : "Pruning index must be non-negative";
             assert pruneIndex <= cexToConcretize.length() : "Pruning index larger than cex length";
@@ -120,7 +121,32 @@ public class SingleExprTraceRefiner<S extends ExprState, A extends ExprAction, P
                     throw new UnsupportedOperationException("Unsupported pruning strategy");
             }
             logger.write(Level.SUBSTEP, "done%n");
+        });
+    }
 
+    public RefinerResult<S, A, P> refine(final Trace<S, A> trace, final P prec) {
+        return refine(trace, prec, null);
+    }
+
+    private RefinerResult<S, A, P> refine(final Trace<S, A> traceToConcretize, final P prec, final Consumer<R> pruner) {
+        logger.write(Level.INFO, "|  |  Trace length: %d%n", traceToConcretize.length());
+        logger.write(Level.DETAIL, "|  |  Trace: %s%n", traceToConcretize);
+
+        logger.write(Level.SUBSTEP, "|  |  Checking trace...");
+        final ExprTraceStatus<R> cexStatus = exprTraceChecker.check(traceToConcretize);
+        logger.write(Level.SUBSTEP, "done, result: %s%n", cexStatus);
+
+        assert cexStatus.isFeasible() || cexStatus.isInfeasible() : "Unknown CEX status";
+
+        if (cexStatus.isFeasible()) {
+            return RefinerResult.unsafe(traceToConcretize);
+        } else {
+            final R refutation = cexStatus.asInfeasible().getRefutation();
+            logger.write(Level.DETAIL, "|  |  |  Refutation: %s%n", refutation);
+            final P refinedPrec = precRefiner.refine(prec, traceToConcretize, refutation);
+            if (pruner != null && pruneStrategy != null) {
+                pruner.accept(refutation);
+            }
             return RefinerResult.spurious(refinedPrec);
         }
     }

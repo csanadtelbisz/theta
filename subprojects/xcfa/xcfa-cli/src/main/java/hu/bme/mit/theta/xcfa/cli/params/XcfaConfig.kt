@@ -149,11 +149,25 @@ data class BackendConfig<T : SpecBackendConfig>(
         specConfig = when (backend) {
             Backend.CEGAR -> CegarConfig() as T
             Backend.BOUNDED -> BoundedConfig() as T
+            Backend.ABSTRACT_BOUNDED -> AbstractBoundedConfig() as T
             Backend.LAZY -> null
             Backend.PORTFOLIO -> PortfolioConfig() as T
             Backend.NONE -> null
         }
     }
+}
+
+data class AbstractBoundedConfig (
+    val cegarConfig: CegarConfig = CegarConfig(),
+    val boundedConfig: BoundedConfig = BoundedConfig()
+) : SpecBackendConfig {
+
+    override fun getObjects(): Set<Config> {
+        return super.getObjects() union cegarConfig.getObjects() union boundedConfig.getObjects()
+    }
+
+    override fun update(): Boolean =
+        listOf(cegarConfig, boundedConfig).map { it.update() }.any { it }
 }
 
 data class CegarConfig(
