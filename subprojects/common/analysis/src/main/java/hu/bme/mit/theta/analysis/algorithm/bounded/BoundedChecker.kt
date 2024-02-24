@@ -157,7 +157,20 @@ class BoundedChecker<S : ExprState, A : ExprAction> @JvmOverloads constructor(
         logger.write(Logger.Level.MAINSTEP, "\tStarting k-induction\n")
 
         exprs.subList(kindLastIterLookup, exprs.size).forEach { indSolver.add(it) }
-        indices.subList(kindLastIterLookup, indices.size - 1).forEach { indSolver.add(unfoldedPropExpr(it)) }
+        val newIndexings = indices.subList(kindLastIterLookup, indices.size - 1)
+        newIndexings.forEach { indSolver.add(unfoldedPropExpr(it)) }
+
+        if (lfPathOnly()) {
+            for (newIndexing in newIndexings) {
+                for (indexing in indices) {
+                    if (indexing == newIndexing) break
+                    val allVarsSame = And(vars.map {
+                        Eq(PathUtils.unfold(it.ref, indexing), PathUtils.unfold(it.ref, indices.last()))
+                    })
+                    indSolver.add(Not(allVarsSame))
+                }
+            }
+        }
 
         return WithPushPop(indSolver).use {
             indSolver.add(Not(unfoldedPropExpr(indices.last())))
