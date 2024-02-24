@@ -149,7 +149,7 @@ class AbstractKind<S : ExprState, A : ExprAction, P : Prec, R : Refutation> @Jvm
             if (!bmcEnabled()) {
                 error("Bad configuration: induction check should always be preceded by a BMC/SAT check")
             }
-            kind()?.let { return it }
+            kind(prec)?.let { return it }
             kindLastIterLookup = iteration
         }
         return SafetyResult.unknown()
@@ -185,7 +185,7 @@ class AbstractKind<S : ExprState, A : ExprAction, P : Prec, R : Refutation> @Jvm
         }
     }
 
-    private fun kind(): SafetyResult<S, A>? {
+    private fun kind(prec: P): SafetyResult<S, A>? {
         val indSolver = this.indSolver!!
 
         logger.write(Logger.Level.MAINSTEP, "\tStarting k-induction...\n")
@@ -196,13 +196,20 @@ class AbstractKind<S : ExprState, A : ExprAction, P : Prec, R : Refutation> @Jvm
         return WithPushPop(indSolver).use {
             indSolver.add(Not(unfoldedPropExpr(indices.last())))
 
+            if (lfPathOnly()) {
+                val states = stateList.map { it.first } + indices.last()
+                for (state1 in states)
+                    for (state2 in states)
+                        if (state1 != state2)
+                            indSolver.add(Not(stateExprHandler.equivalent(state1, state2, prec)))
+            }
+
             if (indSolver.check().isUnsat) {
                 logger.write(Logger.Level.MAINSTEP, "\tSafety proven in k-induction step\n")
                 SafetyResult.safe()
             } else null
         }
     }
-
 
     private fun getTrace(model: Valuation, prec: P): Trace<S, A> {
         val states = mutableListOf<S>()
@@ -218,5 +225,4 @@ class AbstractKind<S : ExprState, A : ExprAction, P : Prec, R : Refutation> @Jvm
         }
         return Trace.of(states, actions)
     }
-
 }

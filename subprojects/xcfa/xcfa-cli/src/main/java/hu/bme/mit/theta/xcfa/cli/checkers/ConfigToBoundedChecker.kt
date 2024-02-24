@@ -49,15 +49,16 @@ import hu.bme.mit.theta.xcfa.cli.params.Domain
 import hu.bme.mit.theta.xcfa.cli.params.XcfaConfig
 import hu.bme.mit.theta.xcfa.cli.utils.*
 import hu.bme.mit.theta.xcfa.getFlatLabels
-import hu.bme.mit.theta.xcfa.model.*
+import hu.bme.mit.theta.xcfa.model.StmtLabel
+import hu.bme.mit.theta.xcfa.model.XCFA
+import hu.bme.mit.theta.xcfa.model.XcfaEdge
+import hu.bme.mit.theta.xcfa.model.XcfaLocation
 
 fun getBoundedChecker(xcfa: XCFA, mcm: MCM,
     config: XcfaConfig<*, *>,
     logger: Logger): SafetyChecker<XcfaState<*>, XcfaAction, XcfaPrec<*>> {
 
     val boundedConfig = config.backendConfig.specConfig as BoundedConfig
-
-    val xcfaExplStateExprHandler = XcfaExplStateExprHandler(xcfa)
 
     return BoundedChecker(
         monolithicExpr = getMonolithicExpr(xcfa),
@@ -81,7 +82,6 @@ fun getBoundedChecker(xcfa: XCFA, mcm: MCM,
 fun getAbstractBoundedChecker(xcfa: XCFA, mcm: MCM,
     config: XcfaConfig<*, *>,
     logger: Logger): SafetyChecker<XcfaState<*>, XcfaAction, XcfaPrec<*>> {
-    System.err.println(xcfa.toDot())
 
     val abstractBoundedConfig = config.backendConfig.specConfig as AbstractBoundedConfig
     val cegarConfig = abstractBoundedConfig.cegarConfig
@@ -111,7 +111,7 @@ fun getAbstractBoundedChecker(xcfa: XCFA, mcm: MCM,
         lfPathOnly = { !boundedConfig.bmcConfig.nonLfPath },
         indSolver = getSolver(boundedConfig.indConfig.indSolver,
             boundedConfig.indConfig.validateIndSolver).createSolver(),
-        kindEnabled = { false },// { !boundedConfig.indConfig.disable },
+        kindEnabled = { !boundedConfig.indConfig.disable },
         biValToAction = { val1, val2 -> valToAction(xcfa, val1, val2) },
         initPrec = cegarConfig.abstractorConfig.domain.initPrec(xcfa, cegarConfig.initPrec),
         refiner = SingleExprTraceRefiner.create(ref, precRefiner, logger),
