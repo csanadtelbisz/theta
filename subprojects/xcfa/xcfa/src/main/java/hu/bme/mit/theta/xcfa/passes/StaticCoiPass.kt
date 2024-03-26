@@ -31,7 +31,7 @@ class StaticCoiPass : ProcedurePass {
             }
         }
 
-        builder.getEdges().forEach { edge ->
+        builder.getEdges().toSet().forEach { edge ->
             val labels = edge.getFlatLabels()
             val kept = mutableListOf<XcfaLabel>()
             labels.forEach { label ->

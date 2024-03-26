@@ -48,7 +48,7 @@ class SimplifyExprsPass(val parseContext: ParseContext) : ProcedurePass {
 
     override fun run(builder: XcfaProcedureBuilder): XcfaProcedureBuilder {
         checkNotNull(builder.metaData["deterministic"])
-        removeUnusedGlobalVarWrites(builder)
+        removeUnusedVarWrites(builder)
         val valuation = findConstVariables(builder)
         val edges = LinkedHashSet(builder.getEdges())
         for (edge in edges) {
@@ -85,7 +85,7 @@ class SimplifyExprsPass(val parseContext: ParseContext) : ProcedurePass {
         return builder
     }
 
-    private fun removeUnusedGlobalVarWrites(builder: XcfaProcedureBuilder) {
+    private fun removeUnusedVarWrites(builder: XcfaProcedureBuilder) {
         val usedVars = mutableSetOf<VarDecl<*>>()
         val xcfaBuilder = builder.parent
         xcfaBuilder.getProcedures().flatMap { it.getEdges() }.forEach {

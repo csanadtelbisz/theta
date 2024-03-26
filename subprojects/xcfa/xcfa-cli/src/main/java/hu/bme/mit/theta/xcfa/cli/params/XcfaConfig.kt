@@ -96,6 +96,9 @@ data class FrontendConfig<T : SpecFrontendConfig>(
     @Parameter(names = ["--lbe"], description = "Level of LBE (NO_LBE, LBE_LOCAL, LBE_SEQ, LBE_FULL)")
     var lbeLevel: LbePass.LbeLevel = LbePass.LbeLevel.LBE_SEQ,
 
+    @Parameter(names = ["--static-coi"], description = "Enable static cone-of-influence")
+    var staticCoi: Boolean = false,
+
     @Parameter(names = ["--unroll"], description = "Max number of loop iterations to unroll")
     var loopUnroll: Int = 50,
 
@@ -186,7 +189,7 @@ data class CegarConfig(
 
 data class CegarAbstractorConfig(
     @Parameter(names = ["--abstraction-solver"], description = "Abstraction solver name")
-    var abstractionSolver: String = "Z3",
+    var abstractionSolver: String = "Z3:4.13",
 
     @Parameter(names = ["--validate-abstraction-solver"],
         description = "Activates a wrapper, which validates the assertions in the solver in each (SAT) check. Filters some solver issues.")
@@ -205,7 +208,7 @@ data class CegarAbstractorConfig(
 
 data class CegarRefinerConfig(
     @Parameter(names = ["--refinement-solver"], description = "Refinement solver name")
-    var refinementSolver: String = "Z3",
+    var refinementSolver: String = "Z3:4.13",
 
     @Parameter(names = ["--validate-refinement-solver"],
         description = "Activates a wrapper, which validates the assertions in the solver in each (SAT) check. Filters some solver issues.")

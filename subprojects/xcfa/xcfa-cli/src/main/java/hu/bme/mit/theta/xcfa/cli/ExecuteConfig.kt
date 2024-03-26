@@ -50,6 +50,7 @@ import hu.bme.mit.theta.xcfa.model.XCFA
 import hu.bme.mit.theta.xcfa.model.toDot
 import hu.bme.mit.theta.xcfa.passes.LbePass
 import hu.bme.mit.theta.xcfa.passes.LoopUnrollPass
+import hu.bme.mit.theta.xcfa.passes.StaticCoiPass
 import hu.bme.mit.theta.xcfa.toC
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -77,6 +78,7 @@ fun runConfig(config: XcfaConfig<*, *>, logger: Logger, uniqueLogger: Logger): S
 private fun propagateInputOptions(config: XcfaConfig<*, *>, logger: Logger, uniqueLogger: Logger) {
     config.inputConfig.property = determineProperty(config, logger)
     LbePass.level = config.frontendConfig.lbeLevel
+    StaticCoiPass.enabled = config.frontendConfig.staticCoi
     if (config.backendConfig.backend == Backend.CEGAR) {
         val cegarConfig = config.backendConfig.specConfig
         cegarConfig as CegarConfig

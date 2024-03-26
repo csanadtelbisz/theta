@@ -325,10 +325,6 @@ enum class ConeOfInfluenceMode(
     NO_COI({ xcfa, ivr, por ->
         por.getLts(xcfa, ivr).also { NO_COI.porLts = it }
     }),
-    STATIC_COI({ xcfa, ivr, por ->
-        StaticCoiPass.enabled = true
-        por.getLts(xcfa, ivr).also { STATIC_COI.porLts = it }
-    }),
     COI({ xcfa, ivr, por ->
         ConeOfInfluence.coreLts = por.getLts(xcfa, ivr).also { COI.porLts = it }
         ConeOfInfluence.lts
