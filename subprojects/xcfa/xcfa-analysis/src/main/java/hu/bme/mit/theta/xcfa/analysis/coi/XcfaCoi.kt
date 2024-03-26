@@ -19,6 +19,7 @@ package hu.bme.mit.theta.xcfa.analysis.coi
 import hu.bme.mit.theta.analysis.LTS
 import hu.bme.mit.theta.analysis.Prec
 import hu.bme.mit.theta.analysis.TransFunc
+import hu.bme.mit.theta.analysis.algorithm.cegar.COILogger
 import hu.bme.mit.theta.analysis.expr.ExprState
 import hu.bme.mit.theta.core.decl.VarDecl
 import hu.bme.mit.theta.core.stmt.AssignStmt
@@ -53,11 +54,29 @@ abstract class XcfaCoi(protected val xcfa: XCFA) {
     abstract val lts: LTS<S, A>
 
     val transFunc = TransFunc<S, A, XcfaPrec<out Prec>> { state, action, prec ->
-        coreTransFunc.getSuccStates(state, action.transFuncVersion ?: action, prec)
+        val a = action.transFuncVersion ?: action
+        action.label.getFlatLabels().forEach {
+            if (it is NopLabel) COILogger.decNops()
+            if (it is StmtLabel && it.stmt is HavocStmt<*>) COILogger.decHavocs()
+        }
+        a.label.getFlatLabels().forEach {
+            COILogger.incAllLabels()
+            if (it is NopLabel) COILogger.incNops()
+            if (it is StmtLabel && it.stmt is HavocStmt<*>) COILogger.incHavocs()
+        }
+        COILogger.incExploredActions()
+
+        COILogger.startTransFuncTimer()
+        val r = coreTransFunc.getSuccStates(state, a, prec)
+        COILogger.stopTransFuncTimer()
+
+        r
     }
 
     init {
+        COILogger.startCoiTimer()
         xcfa.procedures.forEach { tarjan(it.initLoc) }
+        COILogger.stopCoiTimer()
     }
 
     private fun tarjan(initLoc: XcfaLocation) {

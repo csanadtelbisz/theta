@@ -137,6 +137,15 @@ public final class CegarChecker<S extends State, A extends Action, P extends Pre
         assert cegarResult != null;
         logger.write(Level.RESULT, "%s%n", cegarResult);
         logger.write(Level.INFO, "%s%n", stats);
+        System.err.println("Abstractor time: " + stats.getAbstractorTimeMs());
+        System.err.println("Refiner time: " + stats.getRefinerTimeMs());
+        System.err.println("COI time: " + COILogger.coiTimer);
+        System.err.println("TransFunc time: " + COILogger.transFuncTimer);
+        System.err.println("COI NOP labels: " + COILogger.nopsList);
+        System.err.println("COI havoc labels: " + COILogger.havocsList);
+        System.err.println("COI all labels: " + COILogger.allLabelsList);
+        System.err.println("Covers: " + COILogger.coversList);
+        System.err.println("Explored actions: " + COILogger.exploredActionsList);
         return cegarResult;
     }
 

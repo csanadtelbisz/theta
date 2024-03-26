@@ -129,6 +129,7 @@ public class BasicAbstractor<S extends State, A extends Action, P extends Prec> 
         for (final ArgNode<S, A> candidate : candidates) {
             if (candidate.mayCoverStandard(node)) {
                 node.cover(candidate);
+                COILogger.incCovers();
                 return;
             }
         }
