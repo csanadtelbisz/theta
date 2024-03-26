@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ import hu.bme.mit.theta.cfa.analysis.lts.CfaLbeLts;
 import hu.bme.mit.theta.cfa.dsl.CfaDslManager;
 import hu.bme.mit.theta.common.visualization.writer.GraphvizWriter;
 import hu.bme.mit.theta.solver.ItpSolver;
-import hu.bme.mit.theta.solver.z3.Z3SolverFactory;
+import hu.bme.mit.theta.solver.z3legacy.Z3LegacySolverFactory;
 
 public final class CfaPredImpactCheckerTest {
 
@@ -46,8 +46,8 @@ public final class CfaPredImpactCheckerTest {
         final CFA cfa = CfaDslManager.createCfa(
                 new FileInputStream("src/test/resources/counter5_true.cfa"));
 
-        final Solver abstractionSolver = Z3SolverFactory.getInstance().createSolver();
-        final ItpSolver refinementSolver = Z3SolverFactory.getInstance().createItpSolver();
+        final Solver abstractionSolver = Z3LegacySolverFactory.getInstance().createSolver();
+        final ItpSolver refinementSolver = Z3LegacySolverFactory.getInstance().createItpSolver();
 
         final PredImpactChecker checker = PredImpactChecker.create(
                 CfaLbeLts.of(cfa.getErrorLoc().get()), cfa.getInitLoc(),

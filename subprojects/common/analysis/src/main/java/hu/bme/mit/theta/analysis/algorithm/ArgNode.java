@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -20,16 +20,15 @@ import hu.bme.mit.theta.analysis.State;
 import hu.bme.mit.theta.common.Utils;
 import hu.bme.mit.theta.common.container.Containers;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 public final class ArgNode<S extends State, A extends Action> {
-
-    private static final int HASH_SEED = 8543;
-    private volatile int hashCode = 0;
 
     final ARG<S, A> arg;
 
@@ -86,7 +85,15 @@ public final class ArgNode<S extends State, A extends Action> {
 
     public boolean mayCover(final ArgNode<S, A> node) {
         if (arg.getPartialOrd().isLeq(node.getState(), this.getState())) {
-            return !(this.equals(node) || this.isSubsumed());
+            return ancestors().noneMatch(n -> n.equals(node) || n.isSubsumed());
+        } else {
+            return false;
+        }
+    }
+
+    public boolean mayCoverStandard(final ArgNode<S, A> node) {
+        if (arg.getPartialOrd().isLeq(node.getState(), this.getState())) {
+            return !(this.equals(node) || this.isSubsumed()); // no need to check ancestors in CEGAR
         } else {
             return false;
         }
@@ -261,25 +268,6 @@ public final class ArgNode<S extends State, A extends Action> {
     }
 
     ////
-
-    @Override
-    public int hashCode() {
-        int result = hashCode;
-        if (result == 0) {
-            result = HASH_SEED;
-            result = 31 * result + id;
-            hashCode = result;
-        }
-        return result;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        ArgNode<?, ?> argNode = (ArgNode<?, ?>) o;
-        return id == argNode.id;
-    }
 
     @Override
     public String toString() {

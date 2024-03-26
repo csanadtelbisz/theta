@@ -6,12 +6,16 @@ on:
 
 permissions: write-all
 
+concurrency: 
+  group: mac-${{ github.head_ref }}
+  cancel-in-progress: true
+
 jobs:
   test-mac:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, macos-13, macos-12, macos-11]
+        os: [macos-latest, macos-13, macos-12]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository

@@ -1,9 +1,24 @@
+/*
+ *  Copyright 2024 Budapest University of Technology and Economics
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ */
+
 package hu.bme.mit.theta.xcfa.analysis.coi
 
 import hu.bme.mit.theta.analysis.LTS
 import hu.bme.mit.theta.analysis.Prec
 import hu.bme.mit.theta.analysis.TransFunc
-import hu.bme.mit.theta.analysis.algorithm.cegar.COILogger
 import hu.bme.mit.theta.analysis.expr.ExprState
 import hu.bme.mit.theta.core.decl.VarDecl
 import hu.bme.mit.theta.core.stmt.AssignStmt
@@ -19,7 +34,7 @@ import hu.bme.mit.theta.xcfa.model.*
 import java.util.*
 import kotlin.math.min
 
-lateinit var COI: XcfaCoi
+lateinit var ConeOfInfluence: XcfaCoi
 
 internal typealias S = XcfaState<out ExprState>
 internal typealias A = XcfaAction
@@ -38,29 +53,11 @@ abstract class XcfaCoi(protected val xcfa: XCFA) {
     abstract val lts: LTS<S, A>
 
     val transFunc = TransFunc<S, A, XcfaPrec<out Prec>> { state, action, prec ->
-        val a = action.transFuncVersion ?: action
-        action.label.getFlatLabels().forEach {
-            if (it is NopLabel) COILogger.decNops()
-            if (it is StmtLabel && it.stmt is HavocStmt<*>) COILogger.decHavocs()
-        }
-        a.label.getFlatLabels().forEach {
-            COILogger.incAllLabels()
-            if (it is NopLabel) COILogger.incNops()
-            if (it is StmtLabel && it.stmt is HavocStmt<*>) COILogger.incHavocs()
-        }
-        COILogger.incExploredActions()
-
-        COILogger.startTransFuncTimer()
-        val r = coreTransFunc.getSuccStates(state, a, prec)
-        COILogger.stopTransFuncTimer()
-
-        r
+        coreTransFunc.getSuccStates(state, action.transFuncVersion ?: action, prec)
     }
 
     init {
-        COILogger.startCoiTimer()
         xcfa.procedures.forEach { tarjan(it.initLoc) }
-        COILogger.stopCoiTimer()
     }
 
     private fun tarjan(initLoc: XcfaLocation) {
@@ -107,7 +104,7 @@ abstract class XcfaCoi(protected val xcfa: XCFA) {
 
     protected fun findDirectObservers(edge: XcfaEdge, prec: Prec) {
         val precVars = prec.usedVars
-        val writtenVars = edge.getVars().filter { it.value.isWritten && it.key in precVars }
+        val writtenVars = edge.collectVarsWithAccessType().filter { it.value.isWritten && it.key in precVars }
         if (writtenVars.isEmpty()) return
 
         val toVisit = mutableListOf(edge)
@@ -124,7 +121,7 @@ abstract class XcfaCoi(protected val xcfa: XCFA) {
         source: XcfaEdge, target: XcfaEdge, observableVars: Map<VarDecl<*>, AccessType>,
         precVars: Collection<VarDecl<*>>, relation: MutableMap<XcfaEdge, MutableSet<XcfaEdge>>
     ) {
-        val vars = target.getVars()
+        val vars = target.collectVarsWithAccessType()
         var relevantAction = vars.any { it.value.isWritten && it.key in precVars }
         if (!relevantAction) {
             val assumeVars = target.label.collectAssumesVars()

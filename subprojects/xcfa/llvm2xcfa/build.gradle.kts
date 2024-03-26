@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,9 +30,13 @@ dependencies {
 tasks.test {
     if (OperatingSystem.current().isLinux) {
         val nativeLibTasks = project(":theta-llvm").tasks
-        dependsOn(nativeLibTasks.build)
-
-        val linkTask = nativeLibTasks.withType(LinkSharedLibrary::class).first()
-        systemProperty("java.library.path", linkTask.linkedFile.get().asFile.parent)
+        val task = nativeLibTasks.withType(LinkSharedLibrary::class)
+        if (task.any { !it.enabled }) {
+            enabled = false
+        }
+        val linkTask = task.first()
+        dependsOn(linkTask)
+        systemProperty("java.library.path",
+            linkTask.linkedFile.get().asFile.parent + ":/usr/java/packages/lib/amd64:/usr/lib64:/lib64:/lib:/usr/lib")
     }
 }

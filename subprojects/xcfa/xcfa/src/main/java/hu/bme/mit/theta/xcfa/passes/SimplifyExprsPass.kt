@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,8 @@ import hu.bme.mit.theta.core.utils.StmtUtils
 import hu.bme.mit.theta.core.utils.TypeUtils.cast
 import hu.bme.mit.theta.frontend.ParseContext
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.CComplexType
+import hu.bme.mit.theta.xcfa.collectVarsWithAccessType
+import hu.bme.mit.theta.xcfa.isRead
 import hu.bme.mit.theta.xcfa.model.*
 
 /**
@@ -46,6 +48,7 @@ class SimplifyExprsPass(val parseContext: ParseContext) : ProcedurePass {
 
     override fun run(builder: XcfaProcedureBuilder): XcfaProcedureBuilder {
         checkNotNull(builder.metaData["deterministic"])
+        removeUnusedGlobalVarWrites(builder)
         val valuation = findConstVariables(builder)
         val edges = LinkedHashSet(builder.getEdges())
         for (edge in edges) {
@@ -67,7 +70,7 @@ class SimplifyExprsPass(val parseContext: ParseContext) : ProcedurePass {
                                 CComplexType.getType(it.stmt.cond, parseContext))
                         }
                         parseContext.metadata.create(simplified, "cTruth", it.stmt.cond is NeqExpr<*>)
-                        StmtLabel(Assume(simplified), metadata = it.metadata)
+                        StmtLabel(Assume(simplified), metadata = it.metadata, choiceType = it.choiceType)
                     }
 
                     else -> it
@@ -80,6 +83,25 @@ class SimplifyExprsPass(val parseContext: ParseContext) : ProcedurePass {
         }
         builder.metaData["simplifiedExprs"] = Unit
         return builder
+    }
+
+    private fun removeUnusedGlobalVarWrites(builder: XcfaProcedureBuilder) {
+        val usedVars = mutableSetOf<VarDecl<*>>()
+        val xcfaBuilder = builder.parent
+        xcfaBuilder.getProcedures().flatMap { it.getEdges() }.forEach {
+            it.label.collectVarsWithAccessType().forEach { (varDecl, access) ->
+                if (access.isRead) usedVars.add(varDecl)
+            }
+        }
+        val unusedVars = xcfaBuilder.getVars().map { it.wrappedVar } union builder.getVars() subtract
+            usedVars subtract builder.getParams().map { it.first }.toSet()
+        xcfaBuilder.getProcedures().forEach { b ->
+            b.getEdges().toList().forEach { edge ->
+                val newLabel = edge.label.removeUnusedWrites(unusedVars)
+                b.removeEdge(edge)
+                b.addEdge(edge.withLabel(newLabel))
+            }
+        }
     }
 
     private fun findConstVariables(builder: XcfaProcedureBuilder): Valuation {
@@ -100,7 +122,10 @@ class SimplifyExprsPass(val parseContext: ParseContext) : ProcedurePass {
             }
             .filterNotNull()
             .forEach { assignment ->
-                valuation.put(assignment.varDecl, assignment.expr.eval(ImmutableValuation.empty()))
+                try {
+                    valuation.put(assignment.varDecl, assignment.expr.eval(ImmutableValuation.empty()))
+                } catch (_: UnsupportedOperationException) {
+                }
             }
         return valuation
     }

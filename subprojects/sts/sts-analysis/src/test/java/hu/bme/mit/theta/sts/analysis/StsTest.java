@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ import hu.bme.mit.theta.analysis.Action;
 import hu.bme.mit.theta.analysis.Prec;
 import hu.bme.mit.theta.analysis.State;
 import hu.bme.mit.theta.common.Utils;
-import hu.bme.mit.theta.solver.z3.Z3SolverFactory;
+import hu.bme.mit.theta.solver.z3legacy.Z3LegacySolverFactory;
 import hu.bme.mit.theta.sts.STS;
 import hu.bme.mit.theta.sts.aiger.AigerParser;
 import hu.bme.mit.theta.sts.aiger.AigerToSts;
@@ -101,7 +101,7 @@ public class StsTest {
             sts = Utils.singleElementOf(spec.getAllSts());
         }
         StsConfig<? extends State, ? extends Action, ? extends Prec> config
-                = new StsConfigBuilder(domain, refinement, Z3SolverFactory.getInstance()).build(sts);
+                = new StsConfigBuilder(domain, refinement, Z3LegacySolverFactory.getInstance()).build(sts);
         Assert.assertEquals(isSafe, config.check().isSafe());
     }
 

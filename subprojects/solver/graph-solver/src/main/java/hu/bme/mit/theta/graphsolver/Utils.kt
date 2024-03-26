@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ fun GraphConstraint.collectSubRelations(): Set<GraphPattern> = when (this) {
     is Irreflexive -> this.constrainedRule.collectSubRelations()
     is Nonempty -> this.constrainedRule.collectSubRelations()
     is Reflexive -> this.constrainedRule.collectSubRelations()
+    else -> error("") // this should not be necessary, but the compiler complains otherwise
 }
 
 fun GraphPattern.collectSubRelations(): Set<GraphPattern> = when (this) {

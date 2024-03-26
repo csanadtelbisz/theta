@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,13 +38,13 @@ import hu.bme.mit.theta.core.type.Expr;
 import hu.bme.mit.theta.core.type.booltype.BoolType;
 import hu.bme.mit.theta.core.type.inttype.IntType;
 import hu.bme.mit.theta.solver.Solver;
-import hu.bme.mit.theta.solver.z3.Z3SolverFactory;
+import hu.bme.mit.theta.solver.z3legacy.Z3LegacySolverFactory;
 
 @RunWith(Parameterized.class)
 public class ExplStatePredicateTest {
 
     private static final VarDecl<IntType> x = Var("x", Int());
-    private final Solver solver = Z3SolverFactory.getInstance().createSolver();
+    private final Solver solver = Z3LegacySolverFactory.getInstance().createSolver();
 
     @Parameter(value = 0)
     public Expr<BoolType> expr;

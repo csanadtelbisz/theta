@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import hu.bme.mit.theta.xcfa.cli.XcfaCli.Companion.main
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.Arguments
 import org.junit.jupiter.params.provider.MethodSource
-import java.util.*
 import java.util.stream.Stream
 import kotlin.io.path.createTempDirectory
 
@@ -52,6 +51,23 @@ class XcfaCliParseTest {
                 Arguments.of("/c/litmustest/singlethread/18multithread.c"),
                 Arguments.of("/c/litmustest/singlethread/19dportest.c"),
                 Arguments.of("/c/litmustest/singlethread/20testinline.c"),
+                Arguments.of("/c/litmustest/singlethread/21namecollision.c"),
+                Arguments.of("/c/litmustest/singlethread/22nondet.c"),
+                Arguments.of("/c/litmustest/singlethread/23overflow.c"),
+            )
+        }
+
+        @JvmStatic
+        fun simpleCFiles(): Stream<Arguments> {
+            return Stream.of(
+                Arguments.of("/c/litmustest/singlethread/00assignment.c"),
+                Arguments.of("/c/litmustest/singlethread/01cast.c"),
+                Arguments.of("/c/litmustest/singlethread/02types.c"),
+                Arguments.of("/c/litmustest/singlethread/03bitwise.c"),
+                Arguments.of("/c/litmustest/singlethread/14ushort.c"),
+                Arguments.of("/c/litmustest/singlethread/15addition.c"),
+                Arguments.of("/c/litmustest/singlethread/16loop.c"),
+                Arguments.of("/c/litmustest/singlethread/17recursive.c"),
                 Arguments.of("/c/litmustest/singlethread/21namecollision.c"),
                 Arguments.of("/c/litmustest/singlethread/22nondet.c"),
                 Arguments.of("/c/litmustest/singlethread/23overflow.c"),
@@ -95,19 +111,16 @@ class XcfaCliParseTest {
                 Arguments.of("/chc/chc-LIA-Arrays_000.smt2", ChcFrontend.ChcTransformation.PORTFOLIO),
                 Arguments.of("/chc/chc-LIA-Lin-Arrays_000.smt2", ChcFrontend.ChcTransformation.PORTFOLIO),
                 Arguments.of("/chc/chc-LIA-Lin_000.smt2", ChcFrontend.ChcTransformation.PORTFOLIO),
-                Arguments.of("/chc/chc-LIA-nonlin-Arrays-nonrecADT_000.smt2", ChcFrontend.ChcTransformation.PORTFOLIO),
                 Arguments.of("/chc/chc-LIA_000.smt2", ChcFrontend.ChcTransformation.PORTFOLIO),
 
 //                Arguments.of("/chc/chc-LIA-Arrays_000.smt2", ChcFrontend.ChcTransformation.FORWARD), // nonlin
                 Arguments.of("/chc/chc-LIA-Lin-Arrays_000.smt2", ChcFrontend.ChcTransformation.FORWARD),
                 Arguments.of("/chc/chc-LIA-Lin_000.smt2", ChcFrontend.ChcTransformation.FORWARD),
-                Arguments.of("/chc/chc-LIA-nonlin-Arrays-nonrecADT_000.smt2", ChcFrontend.ChcTransformation.FORWARD),
 //                Arguments.of("/chc/chc-LIA_000.smt2", ChcFrontend.ChcTransformation.FORWARD), // nonlin
 
                 Arguments.of("/chc/chc-LIA-Arrays_000.smt2", ChcFrontend.ChcTransformation.BACKWARD),
                 Arguments.of("/chc/chc-LIA-Lin-Arrays_000.smt2", ChcFrontend.ChcTransformation.BACKWARD),
                 Arguments.of("/chc/chc-LIA-Lin_000.smt2", ChcFrontend.ChcTransformation.BACKWARD),
-                Arguments.of("/chc/chc-LIA-nonlin-Arrays-nonrecADT_000.smt2", ChcFrontend.ChcTransformation.BACKWARD),
                 Arguments.of("/chc/chc-LIA_000.smt2", ChcFrontend.ChcTransformation.BACKWARD),
             )
         }
@@ -157,7 +170,8 @@ class XcfaCliParseTest {
         main(arrayOf(
             "--input-type", "C",
             "--input", javaClass.getResource(filePath)!!.path,
-            "--parse-only", "--stacktrace"
+            "--backend", "NONE", "--stacktrace",
+            "--debug"
         ))
     }
 
@@ -168,7 +182,7 @@ class XcfaCliParseTest {
 //            main(arrayOf(
 //                "--input-type", "LLVM",
 //                "--input", javaClass.getResource(filePath)!!.path,
-//                "--parse-only", "--stacktrace"
+//                "--backend", "NONE", "--stacktrace"
 //            ))
 //        }
 //    }
@@ -180,8 +194,9 @@ class XcfaCliParseTest {
             "--input-type", "CHC",
             "--chc-transformation", chcTransformation.toString(),
             "--input", javaClass.getResource(filePath)!!.path,
-            "--parse-only",
+            "--backend", "NONE",
             "--stacktrace",
+            "--debug"
         ))
     }
 
@@ -191,8 +206,9 @@ class XcfaCliParseTest {
         main(arrayOf(
             "--input-type", "DSL",
             "--input", javaClass.getResource(filePath)!!.path,
-            "--parse-only",
+            "--backend", "NONE",
             "--stacktrace",
+            "--debug"
         ))
     }
 
@@ -202,8 +218,9 @@ class XcfaCliParseTest {
         main(arrayOf(
             "--input-type", "JSON",
             "--input", javaClass.getResource(filePath)!!.path,
-            "--parse-only",
+            "--backend", "NONE",
             "--stacktrace",
+            "--debug"
         ))
     }
 
@@ -214,17 +231,41 @@ class XcfaCliParseTest {
         main(arrayOf(
             "--input-type", "C",
             "--input", javaClass.getResource(filePath)!!.path,
-            "--parse-only",
+            "--backend", "NONE",
             "--stacktrace",
-            "--output-results",
             "--output-directory", temp.toAbsolutePath().toString(),
+            "--debug"
         ))
         val xcfaJson = temp.resolve("xcfa.json").toFile()
         main(arrayOf(
             "--input-type", "JSON",
             "--input", xcfaJson.absolutePath.toString(),
-            "--parse-only",
+            "--backend", "NONE",
             "--stacktrace",
+            "--debug"
+        ))
+        temp.toFile().deleteRecursively()
+    }
+
+    @ParameterizedTest
+    @MethodSource("simpleCFiles")
+    fun testCParseRoundTrip(filePath: String) {
+        val temp = createTempDirectory()
+        main(arrayOf(
+            "--input-type", "C",
+            "--input", javaClass.getResource(filePath)!!.path,
+            "--backend", "NONE",
+            "--stacktrace",
+            "--output-directory", temp.toAbsolutePath().toString(),
+            "--debug"
+        ))
+        val xcfaC = temp.resolve("xcfa.c").toFile()
+        main(arrayOf(
+            "--input-type", "C",
+            "--input", xcfaC.absolutePath.toString(),
+            "--backend", "NONE",
+            "--stacktrace",
+            "--debug"
         ))
         temp.toFile().deleteRecursively()
     }

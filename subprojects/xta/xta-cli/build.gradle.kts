@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ plugins {
 dependencies {
     implementation(project(":theta-xta"))
     implementation(project(":theta-xta-analysis"))
-    implementation(project(":theta-solver-z3"))
+    implementation(project(":theta-solver-z3-legacy"))
     implementation(project(":theta-solver"))
     implementation(project(":theta-common"))
     implementation(project(":theta-core"))

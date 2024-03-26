@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,13 +35,11 @@ include(
 
     "xcfa/xcfa",
     "xcfa/cat",
-    "xcfa/exec-graph-cli",
     "xcfa/c2xcfa",
     "xcfa/litmus2xcfa",
     "xcfa/llvm2xcfa",
     "xcfa/xcfa-analysis",
     "xcfa/xcfa-cli",
-    "xcfa/litmus-cli",
 
     "xta/xta",
     "xta/xta-analysis",
@@ -53,6 +51,8 @@ include(
 
     "solver/solver",
     "solver/solver-z3",
+    "solver/solver-z3-legacy",
+    "solver/solver-javasmt",
     "solver/solver-smtlib",
     "solver/solver-smtlib-cli",
     "solver/graph-solver",

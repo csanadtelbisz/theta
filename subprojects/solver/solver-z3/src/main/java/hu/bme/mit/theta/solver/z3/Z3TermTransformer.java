@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -264,7 +264,7 @@ final class Z3TermTransformer {
         BigFloat bigFloat = new BigFloat((fpTerm).getSignificand(),
                 FpUtils.getMathContext(type, FpRoundingMode.RNE)).multiply(
                 new BigFloat("2", FpUtils.getMathContext(type, FpRoundingMode.RNE)).pow(
-                        new BigFloat((fpTerm).getExponent(),
+                        new BigFloat((fpTerm).getExponent(true),
                                 FpUtils.getMathContext(type, FpRoundingMode.RNE)),
                         FpUtils.getMathContext(type, FpRoundingMode.RNE)),
                 FpUtils.getMathContext(type, FpRoundingMode.RNE));

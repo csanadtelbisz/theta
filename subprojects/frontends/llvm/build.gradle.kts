@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,14 +22,61 @@ plugins {
     id("cpp-library")
 }
 
-val enabled = current().isLinux &&
+/**
+ * This subproject builds the lib/libtheta-llvm.so if the necessary pre-requisites are met (LLVM-15 is available)
+ */
+
+val llvmConfigBinary = try {
+    val output = runCommandForOutput("llvm-config", "--version")
+    val version = output[0].split('.')
+    val major = version[0]
+    val minor = version[1]
+    val patch = version[2]
+    if (major == "15")
+        "llvm-config"
+    else
+        throw IOException()
+} catch (e: IOException) {
     try {
-        runCommandForOutput("llvm-config")
-        true
+        val output = runCommandForOutput("llvm-config-15", "--version")
+        val version = output[0].split('.')
+        val major = version[0]
+        val minor = version[1]
+        val patch = version[2]
+        if (major == "15")
+            "llvm-config-15"
+        else
+            throw IOException()
     } catch (e: IOException) {
-        println("LLVM not installed, not building native library.")
-        false
+        println("LLVM-15 not installed, not building native library.")
+        null
     }
+}
+
+val clangBinary = try {
+    val output = runCommandForOutput("clang", "--version")
+    var version: List<String> = listOf(output.joinToString(" "))
+    for (token in output) {
+        val tryVersion = token.split('.')
+        if (tryVersion.size == 3 && tryVersion.all { it.all(Char::isDigit) }) {
+            version = tryVersion
+            break
+        }
+    }
+
+    val major = version[0]
+    if (major == "15") {
+        "clang"
+    } else {
+        println("clang does not point to clang-15, not building native library. Found version: $version")
+        null
+    }
+} catch (e: IOException) {
+    println("clang-15 not installed , not building native library.")
+    null
+}
+
+val taskEnabled = current().isLinux && llvmConfigBinary != null && clangBinary != null
 
 fun runCommandForOutput(vararg args: String): Array<String> {
     val process = ProcessBuilder(*args).start()
@@ -38,7 +85,7 @@ fun runCommandForOutput(vararg args: String): Array<String> {
     process.waitFor()
     val ret = outputStream.toString()
         .trim()
-        .split(" ")
+        .split(" ", "\n", "\r")
         .filter { it.length > 1 }
         .map { it.trim() }
         .toTypedArray()
@@ -46,17 +93,17 @@ fun runCommandForOutput(vararg args: String): Array<String> {
 }
 
 fun llvmConfigFlags(vararg args: String): Array<String> {
-    if (!enabled) return arrayOf()
+    if (!taskEnabled) return arrayOf()
     return try {
-        runCommandForOutput("llvm-config", *args)
+        runCommandForOutput(llvmConfigBinary!!, *args)
     } catch (e: IOException) {
         e.printStackTrace()
         arrayOf()
-    }.also { println("LLVM flags (${args.toList()}): ${it.toList()}") }
+    }
 }
 
 fun jniConfigFlags(): Array<String> {
-    if (!enabled) return arrayOf()
+    if (!taskEnabled) return arrayOf()
     val jdkHomeArr = runCommandForOutput("bash", "-c",
         "dirname \$(cd \$(dirname \$(readlink -f \$(which javac) || which javac)); pwd -P)")
     check(jdkHomeArr.size == 1)
@@ -67,7 +114,7 @@ fun jniConfigFlags(): Array<String> {
     return arrayOf(
         "-I${mainInclude.absolutePath}",
         "-I${linuxInclude.absolutePath}",
-    ).also { println("JNI flags: ${it.toList()}") }
+    )
 }
 
 library {
@@ -78,9 +125,9 @@ library {
             "-fpic",
             *jniConfigFlags(),
             *llvmConfigFlags("--cxxflags")))
-        onlyIf {
-            println("CppCompile is enabled: $enabled")
-            this@Build_gradle.enabled
+        if (!taskEnabled) {
+            println("CppCompile is enabled: $taskEnabled")
+            enabled = false
         }
     }
 
@@ -89,9 +136,9 @@ library {
             "-rdynamic",
             *llvmConfigFlags("--cxxflags", "--ldflags", "--libs", "core", "bitreader"),
             "-ldl"))
-        onlyIf {
-            println("LinkSharedLibrary is enabled: $enabled")
-            this@Build_gradle.enabled
+        if (!taskEnabled) {
+            println("LinkSharedLibrary is enabled: $taskEnabled")
+            enabled = false
         }
     }
 }

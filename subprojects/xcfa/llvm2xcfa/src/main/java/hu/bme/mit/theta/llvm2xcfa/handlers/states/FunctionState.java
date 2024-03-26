@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -58,7 +58,7 @@ public class FunctionState {
     public FunctionState(GlobalState globalState, Tuple3<String, Optional<String>, List<Tuple2<String, String>>> function) {
         this.globalState = globalState;
         this.function = function;
-        procedureBuilder = new XcfaProcedureBuilder(function.get1(), new ProcedurePassManager(List.of()));
+        procedureBuilder = new XcfaProcedureBuilder(function.get1(), new ProcedurePassManager());
 //        procedureBuilder.setName(function.get1());
         localVars = new HashMap<>();
         params = new HashSet<>();

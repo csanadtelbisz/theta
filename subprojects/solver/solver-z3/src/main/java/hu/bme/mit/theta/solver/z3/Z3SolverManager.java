@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ import static com.google.common.base.Preconditions.checkState;
 
 public final class Z3SolverManager extends SolverManager {
 
-    private static final String NAME = "Z3";
+    private static final String NAME = "Z3:4.13";
 
     private boolean closed = false;
     private final Set<SolverBase> instantiatedSolvers = new HashSet<>();

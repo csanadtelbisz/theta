@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ dependencies {
     implementation(project(":theta-common"))
     implementation(project(":theta-core"))
     implementation(project(":theta-solver"))
+    implementation(project(":theta-solver-smtlib")) // necessary for interpolation right now
     implementation(files(rootDir.resolve(Deps.z3)))
     testImplementation(testFixtures(project(":theta-core")))
 }

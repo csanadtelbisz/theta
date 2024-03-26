@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ package hu.bme.mit.theta.fronted.litmus2xcfa;
 import hu.bme.mit.theta.core.type.Expr;
 import hu.bme.mit.theta.frontend.litmus2xcfa.LitmusInterpreter;
 import hu.bme.mit.theta.solver.Solver;
-import hu.bme.mit.theta.solver.z3.Z3SolverFactory;
+import hu.bme.mit.theta.solver.z3legacy.Z3LegacySolverFactory;
 import hu.bme.mit.theta.xcfa.model.XCFA;
 import hu.bme.mit.theta.xcfa.model.XcfaProcedure;
 import kotlin.Pair;
@@ -74,7 +74,7 @@ public class LitmusTest {
 
     @Test
     public void check() throws IOException {
-        try (Solver solver = Z3SolverFactory.getInstance().createSolver()) {
+        try (Solver solver = Z3LegacySolverFactory.getInstance().createSolver()) {
             final XCFA xcfa = LitmusInterpreter.getXcfa(getClass().getResourceAsStream(filepath));
             final List<Pair<XcfaProcedure, List<Expr<?>>>> processes = xcfa.getInitProcedures();
             final List<Integer> processIds = new ArrayList<>();

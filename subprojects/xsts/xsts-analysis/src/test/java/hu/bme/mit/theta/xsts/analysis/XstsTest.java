@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ import hu.bme.mit.theta.analysis.algorithm.SafetyResult;
 import hu.bme.mit.theta.common.logging.ConsoleLogger;
 import hu.bme.mit.theta.common.logging.Logger;
 import hu.bme.mit.theta.common.logging.Logger.Level;
-import hu.bme.mit.theta.solver.z3.Z3SolverFactory;
+import hu.bme.mit.theta.solver.z3legacy.Z3LegacySolverFactory;
 import hu.bme.mit.theta.xsts.XSTS;
 import hu.bme.mit.theta.xsts.analysis.config.XstsConfig;
 import hu.bme.mit.theta.xsts.analysis.config.XstsConfigBuilder;
@@ -356,8 +356,8 @@ public class XstsTest {
         }
 
         final XstsConfig<?, ?, ?> configuration = new XstsConfigBuilder(domain,
-                XstsConfigBuilder.Refinement.SEQ_ITP, Z3SolverFactory.getInstance(),
-                Z3SolverFactory.getInstance()).initPrec(XstsConfigBuilder.InitPrec.CTRL)
+                XstsConfigBuilder.Refinement.SEQ_ITP, Z3LegacySolverFactory.getInstance(),
+                Z3LegacySolverFactory.getInstance()).initPrec(XstsConfigBuilder.InitPrec.CTRL)
                 .optimizeStmts(XstsConfigBuilder.OptimizeStmts.ON)
                 .predSplit(XstsConfigBuilder.PredSplit.CONJUNCTS).maxEnum(250)
                 .autoExpl(XstsConfigBuilder.AutoExpl.NEWOPERANDS).logger(logger).build(xsts);

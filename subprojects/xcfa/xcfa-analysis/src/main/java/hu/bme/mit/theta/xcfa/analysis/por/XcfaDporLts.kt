@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ import hu.bme.mit.theta.analysis.waitlist.Waitlist
 import hu.bme.mit.theta.xcfa.analysis.XcfaAction
 import hu.bme.mit.theta.xcfa.analysis.XcfaState
 import hu.bme.mit.theta.xcfa.analysis.getXcfaLts
-import hu.bme.mit.theta.xcfa.getGlobalVars
+import hu.bme.mit.theta.xcfa.collectIndirectGlobalVarAccesses
 import hu.bme.mit.theta.xcfa.isWritten
 import hu.bme.mit.theta.xcfa.model.XCFA
 import java.util.*
@@ -258,7 +258,8 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
 
                 val action = node.inEdge.get().action
                 if (relevantProcesses.contains(action.pid)) {
-                    if (newLastDependents.containsKey(action.pid) && index <= newLastDependents[action.pid]!!) {
+                    if (newLastDependents.containsKey(action.pid) && index <= checkNotNull(
+                            newLastDependents[action.pid])) {
                         // there is an action a' such that  action -> a' -> newaction  (->: happens-before)
                         relevantProcesses.remove(action.pid)
                     } else if (dependent(newaction, action)) {
@@ -277,7 +278,7 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
 
                         newLastDependents[action.pid] = index
                         newLastDependents =
-                            max(newLastDependents, stack[index].lastDependents[action.pid]!!)
+                            max(newLastDependents, checkNotNull(stack[index].lastDependents[action.pid]))
                         relevantProcesses.remove(action.pid)
                     }
                 }
@@ -442,9 +443,10 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
          */
         private fun noInfluenceOnRealExploration(realStackSize: Int) =
             last.processLastAction.keys.all { process ->
-                last.lastDependents.containsKey(process) && last.lastDependents[process]!!.all { (_, index) ->
-                    index >= realStackSize
-                }
+                last.lastDependents.containsKey(process) &&
+                    checkNotNull(last.lastDependents[process]).all { (_, index) ->
+                        index >= realStackSize
+                    }
             }
     }
 
@@ -454,8 +456,8 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
     protected open fun dependent(a: A, b: A): Boolean {
         if (a.pid == b.pid) return true
 
-        val aGlobalVars = a.edge.getGlobalVars(xcfa)
-        val bGlobalVars = b.edge.getGlobalVars(xcfa)
+        val aGlobalVars = a.edge.collectIndirectGlobalVarAccesses(xcfa)
+        val bGlobalVars = b.edge.collectIndirectGlobalVarAccesses(xcfa)
         // dependent if they access the same variable (at least one write)
         return (aGlobalVars.keys intersect bGlobalVars.keys).any { aGlobalVars[it].isWritten || bGlobalVars[it].isWritten }
     }
@@ -486,8 +488,8 @@ class XcfaAadporLts(private val xcfa: XCFA) : XcfaDporLts(xcfa) {
         if (a.pid == b.pid) return true
 
         val precVars = prec?.usedVars?.toSet() ?: return super.dependent(a, b)
-        val aGlobalVars = a.edge.getGlobalVars(xcfa)
-        val bGlobalVars = b.edge.getGlobalVars(xcfa)
+        val aGlobalVars = a.edge.collectIndirectGlobalVarAccesses(xcfa)
+        val bGlobalVars = b.edge.collectIndirectGlobalVarAccesses(xcfa)
         // dependent if they access the same variable in the precision (at least one write)
         return (aGlobalVars.keys intersect bGlobalVars.keys intersect precVars).any { aGlobalVars[it].isWritten || bGlobalVars[it].isWritten }
     }

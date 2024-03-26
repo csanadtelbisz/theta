@@ -1,5 +1,5 @@
 /*
- *  Copyright 2023 Budapest University of Technology and Economics
+ *  Copyright 2024 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ import hu.bme.mit.theta.core.model.ImmutableValuation
 import hu.bme.mit.theta.core.stmt.AssumeStmt
 import hu.bme.mit.theta.core.stmt.Stmt
 import hu.bme.mit.theta.solver.Solver
-import hu.bme.mit.theta.solver.SolverManager
+import hu.bme.mit.theta.solver.z3legacy.Z3LegacySolverFactory
 import hu.bme.mit.theta.xcfa.collectVars
 import hu.bme.mit.theta.xcfa.collectVarsWithAccessType
 import hu.bme.mit.theta.xcfa.getFlatLabels
@@ -43,7 +43,7 @@ class LoopUnrollPass : ProcedurePass {
 
         var UNROLL_LIMIT = 50
 
-        private val solver: Solver = SolverManager.resolveSolverFactory("Z3").createSolver()
+        private val solver: Solver = Z3LegacySolverFactory.getInstance().createSolver()
     }
 
     private val testedLoops = mutableSetOf<Loop>()
@@ -98,13 +98,13 @@ class LoopUnrollPass : ProcedurePass {
             }
 
             loopEdges.forEach {
-                val newSource = if (it.source == loopStart) startLocation else locs[it.source]!!
+                val newSource = if (it.source == loopStart) startLocation else checkNotNull(locs[it.source])
                 val newLabel = if (it.source == loopStart) it.label.removeCondition() else it.label
-                val edge = XcfaEdge(newSource, locs[it.target]!!, newLabel, it.metadata)
+                val edge = XcfaEdge(newSource, checkNotNull(locs[it.target]!!), newLabel, it.metadata)
                 builder.addEdge(edge)
             }
 
-            return locs[loopStart]!!
+            return checkNotNull(locs[loopStart])
         }
 
         fun unroll(builder: XcfaProcedureBuilder, transFunc: ExplStmtTransFunc) {
