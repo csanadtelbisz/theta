@@ -189,7 +189,7 @@ data class CegarConfig(
 
 data class CegarAbstractorConfig(
     @Parameter(names = ["--abstraction-solver"], description = "Abstraction solver name")
-    var abstractionSolver: String = "Z3:4.13",
+    var abstractionSolver: String = "Z3",
 
     @Parameter(names = ["--validate-abstraction-solver"],
         description = "Activates a wrapper, which validates the assertions in the solver in each (SAT) check. Filters some solver issues.")
@@ -208,7 +208,7 @@ data class CegarAbstractorConfig(
 
 data class CegarRefinerConfig(
     @Parameter(names = ["--refinement-solver"], description = "Refinement solver name")
-    var refinementSolver: String = "Z3:4.13",
+    var refinementSolver: String = "Z3",
 
     @Parameter(names = ["--validate-refinement-solver"],
         description = "Activates a wrapper, which validates the assertions in the solver in each (SAT) check. Filters some solver issues.")
