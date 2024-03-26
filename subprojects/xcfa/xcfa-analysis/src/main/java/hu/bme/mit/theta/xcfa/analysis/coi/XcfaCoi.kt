@@ -48,7 +48,7 @@ abstract class XcfaCoi(protected val xcfa: XCFA) {
 
     protected var lastPrec: Prec? = null
     protected var XcfaLocation.scc: Int by extension()
-    protected val directObservation: MutableMap<XcfaEdge, MutableSet<XcfaEdge>> = mutableMapOf()
+    protected val directObservers: MutableMap<XcfaEdge, Set<XcfaEdge>> = mutableMapOf()
 
     abstract val lts: LTS<S, A>
 
@@ -112,14 +112,14 @@ abstract class XcfaCoi(protected val xcfa: XCFA) {
         while (toVisit.isNotEmpty()) {
             val visiting = toVisit.removeFirst()
             visited.add(visiting)
-            addEdgeIfObserved(edge, visiting, writtenVars, precVars, directObservation)
+            addEdgeIfObserved(edge, visiting, writtenVars, precVars, directObservers)
             toVisit.addAll(visiting.target.outgoingEdges.filter { it !in visited })
         }
     }
 
     protected open fun addEdgeIfObserved(
         source: XcfaEdge, target: XcfaEdge, observableVars: Map<VarDecl<*>, AccessType>,
-        precVars: Collection<VarDecl<*>>, relation: MutableMap<XcfaEdge, MutableSet<XcfaEdge>>
+        precVars: Collection<VarDecl<*>>, relation: MutableMap<XcfaEdge, Set<XcfaEdge>>
     ) {
         val vars = target.collectVarsWithAccessType()
         var relevantAction = vars.any { it.value.isWritten && it.key in precVars }
@@ -134,7 +134,7 @@ abstract class XcfaCoi(protected val xcfa: XCFA) {
     }
 
     protected abstract fun addToRelation(source: XcfaEdge, target: XcfaEdge,
-        relation: MutableMap<XcfaEdge, MutableSet<XcfaEdge>>)
+        relation: MutableMap<XcfaEdge, Set<XcfaEdge>>)
 
     protected fun isRealObserver(edge: XcfaEdge) = edge.label.collectAssumesVars().isNotEmpty()
 

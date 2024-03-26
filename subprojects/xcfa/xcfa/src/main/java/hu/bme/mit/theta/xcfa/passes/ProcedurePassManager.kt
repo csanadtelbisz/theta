@@ -51,6 +51,9 @@ class CPasses(checkOverflow: Boolean, parseContext: ParseContext, uniqueWarningL
         EliminateSelfLoops(parseContext),
     ),
     listOf(
+        StaticCoiPass(),
+    ),
+    listOf(
         // handling remaining function calls
         NondetFunctionPass(parseContext),
         LbePass(parseContext),

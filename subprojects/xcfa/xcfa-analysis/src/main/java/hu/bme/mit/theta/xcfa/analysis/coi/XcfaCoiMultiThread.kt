@@ -35,7 +35,7 @@ class XcfaCoiMultiThread(xcfa: XCFA) : XcfaCoi(xcfa) {
         set(value) {
             edgeToProcedure[this] = value
         }
-    private val interProcessObservation: MutableMap<XcfaEdge, MutableSet<XcfaEdge>> = mutableMapOf()
+    private val interProcessObservers: MutableMap<XcfaEdge, Set<XcfaEdge>> = mutableMapOf()
 
     data class ProcedureEntry(
         val procedure: XcfaProcedure,
@@ -101,8 +101,8 @@ class XcfaCoiMultiThread(xcfa: XCFA) : XcfaCoi(xcfa) {
                 if (isRealObserver(visiting)) return true
 
                 visited.add(visiting)
-                val toAdd = (directObservation[visiting] ?: emptySet()) union
-                    (interProcessObservation[visiting]?.filter { edge ->
+                val toAdd = (directObservers[visiting] ?: emptySet()) union
+                    (interProcessObservers[visiting]?.filter { edge ->
                         procedures.any {
                             it.procedure.name == edge.procedure.name && it.scc >= edge.source.scc &&
                                 (it.procedure.name != visiting.procedure.name || it.procedure in multipleProcedures)
@@ -126,8 +126,8 @@ class XcfaCoiMultiThread(xcfa: XCFA) : XcfaCoi(xcfa) {
     }
 
     fun reinitialize(prec: Prec) {
-        directObservation.clear()
-        interProcessObservation.clear()
+        directObservers.clear()
+        interProcessObservers.clear()
         xcfa.procedures.forEach { procedure ->
             procedure.edges.forEach { edge ->
                 edge.procedure = procedure
@@ -146,14 +146,12 @@ class XcfaCoiMultiThread(xcfa: XCFA) : XcfaCoi(xcfa) {
 
         xcfa.procedures.forEach { procedure ->
             procedure.edges.forEach {
-                addEdgeIfObserved(edge, it, writtenVars, precVars, interProcessObservation)
+                addEdgeIfObserved(edge, it, writtenVars, precVars, interProcessObservers)
             }
         }
     }
 
-    override fun addToRelation(source: XcfaEdge, target: XcfaEdge,
-        relation: MutableMap<XcfaEdge, MutableSet<XcfaEdge>>) {
-        relation[source] = relation[source] ?: mutableSetOf()
-        relation[source]!!.add(target)
+    override fun addToRelation(source: XcfaEdge, target: XcfaEdge, relation: MutableMap<XcfaEdge, Set<XcfaEdge>>) {
+        relation[source] = relation.getOrDefault(source, setOf()) + target
     }
 }

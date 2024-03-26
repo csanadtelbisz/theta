@@ -47,6 +47,7 @@ import hu.bme.mit.theta.xcfa.cli.utils.XcfaDistToErrComparator
 import hu.bme.mit.theta.xcfa.collectAssumes
 import hu.bme.mit.theta.xcfa.collectVars
 import hu.bme.mit.theta.xcfa.model.XCFA
+import hu.bme.mit.theta.xcfa.passes.StaticCoiPass
 import java.lang.reflect.Type
 
 enum class InputType {
@@ -323,6 +324,10 @@ enum class ConeOfInfluenceMode(
 
     NO_COI({ xcfa, ivr, por ->
         por.getLts(xcfa, ivr).also { NO_COI.porLts = it }
+    }),
+    STATIC_COI({ xcfa, ivr, por ->
+        StaticCoiPass.enabled = true
+        por.getLts(xcfa, ivr).also { STATIC_COI.porLts = it }
     }),
     COI({ xcfa, ivr, por ->
         ConeOfInfluence.coreLts = por.getLts(xcfa, ivr).also { COI.porLts = it }
