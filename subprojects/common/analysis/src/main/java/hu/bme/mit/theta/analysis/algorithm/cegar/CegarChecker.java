@@ -97,6 +97,8 @@ public final class CegarChecker<S extends State, A extends Action, P extends Pre
                 wdl.addIteration(iteration, argGraph, precString);
             }
 
+            COILogger.newIteration();
+
             if (abstractorResult.isUnsafe()) {
                 MonitorCheckpoint.Checkpoints.execute("CegarChecker.unsafeARG");
 
@@ -146,6 +148,8 @@ public final class CegarChecker<S extends State, A extends Action, P extends Pre
         System.err.println("COI all labels: " + COILogger.allLabelsList);
         System.err.println("Covers: " + COILogger.coversList);
         System.err.println("Explored actions: " + COILogger.exploredActionsList);
+        System.err.println("Static NOP labels: " + COILogger.staticNops);
+        System.err.println("Static all labels: " + COILogger.staticAllLabels);
         return cegarResult;
     }
 

@@ -16,6 +16,7 @@
 
 package hu.bme.mit.theta.xcfa.passes
 
+import hu.bme.mit.theta.analysis.algorithm.cegar.COILogger
 import hu.bme.mit.theta.core.decl.Decl
 import hu.bme.mit.theta.core.decl.VarDecl
 import hu.bme.mit.theta.core.stmt.*
@@ -173,11 +174,11 @@ internal fun XcfaLabel.removeUnusedWrites(unusedVars: Set<VarDecl<*>>): XcfaLabe
         }
 
         is StmtLabel -> when (this.stmt) {
-            is AssignStmt<*> -> if (unusedVars.contains(this.stmt.varDecl)) NopLabel else this
-            is HavocStmt<*> -> if (unusedVars.contains(this.stmt.varDecl)) NopLabel else this
+            is AssignStmt<*> -> if (unusedVars.contains(this.stmt.varDecl)) NopLabel.also { COILogger.incStaticNops() } else this
+            is HavocStmt<*> -> if (unusedVars.contains(this.stmt.varDecl)) NopLabel.also { COILogger.incStaticNops() } else this
             else -> this
-        }
+        }.also { COILogger.incStaticAllLabels() }
 
-        else -> this
+        else -> this.also { COILogger.incStaticAllLabels() }
     }
 }

@@ -64,4 +64,13 @@ public class COILogger {
         exploredActions = 0;
         covers = 0;
     }
+
+    static long staticAllLabels = 0;
+    static long staticNops = 0;
+    public static void incStaticAllLabels() {
+        staticAllLabels++;
+    }
+    public static void incStaticNops() {
+        staticNops++;
+    }
 }
