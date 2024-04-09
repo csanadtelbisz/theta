@@ -73,4 +73,21 @@ public class COILogger {
     public static void incStaticNops() {
         staticNops++;
     }
+
+    static long staticCoiDirectTimer = 0;
+    static long staticCoiIndirectTimer = 0;
+    static long startStaticCoiDirect = 0;
+    static long startStaticCoiIndirect = 0;
+    public static void startStaticCoiDirectTimer() {
+        startStaticCoiDirect = System.currentTimeMillis();
+    }
+    public static void stopStaticCoiDirectTimer() {
+        staticCoiDirectTimer += System.currentTimeMillis() - startStaticCoiDirect;
+    }
+    public static void startStaticCoiIndirectTimer() {
+        startStaticCoiIndirect = System.currentTimeMillis();
+    }
+    public static void stopStaticCoiIndirectTimer() {
+        staticCoiIndirectTimer += System.currentTimeMillis() - startStaticCoiIndirect;
+    }
 }

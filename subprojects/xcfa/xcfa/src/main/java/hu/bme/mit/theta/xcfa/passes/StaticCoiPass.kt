@@ -1,5 +1,6 @@
 package hu.bme.mit.theta.xcfa.passes
 
+import hu.bme.mit.theta.analysis.algorithm.cegar.COILogger
 import hu.bme.mit.theta.core.decl.VarDecl
 import hu.bme.mit.theta.core.stmt.AssignStmt
 import hu.bme.mit.theta.core.stmt.HavocStmt
@@ -24,8 +25,12 @@ class StaticCoiPass : ProcedurePass {
                 val flatLabels = edge.getFlatLabels()
                 flatLabels.forEachIndexed { index, label ->
                     if (label is StmtLabel) {
+                        COILogger.startStaticCoiDirectTimer()
                         findDirectObservers(edge, label, flatLabels.subList(index + 1, flatLabels.size))
+                        COILogger.stopStaticCoiDirectTimer()
+                        COILogger.startStaticCoiIndirectTimer()
                         findIndirectObservers(label, builder)
+                        COILogger.stopStaticCoiIndirectTimer()
                     }
                 }
             }
@@ -35,8 +40,12 @@ class StaticCoiPass : ProcedurePass {
             val labels = edge.getFlatLabels()
             val kept = mutableListOf<XcfaLabel>()
             labels.forEach { label ->
+                COILogger.incStaticAllLabels()
                 if (!label.canBeSimplified || isObserved(label)) {
                     kept.add(label)
+                } else {
+                    System.err.println(label)
+                    COILogger.incStaticNops()
                 }
             }
             if (kept.size != labels.size) {
@@ -48,7 +57,7 @@ class StaticCoiPass : ProcedurePass {
         return builder
     }
 
-    private val XcfaLabel.canBeSimplified get() = this is StmtLabel && (this.stmt is AssignStmt<*> || this.stmt is HavocStmt<*>)
+    private val XcfaLabel.canBeSimplified get() = this is StmtLabel && ((this.stmt is AssignStmt<*> && "_ret" !in this.stmt.varDecl.name) || this.stmt is HavocStmt<*>)
 
     private fun findDirectObservers(edge: XcfaEdge, label: XcfaLabel, remaining: List<XcfaLabel>) {
         val writtenVars = label.collectVarsWithAccessType().filter { it.value.isWritten }

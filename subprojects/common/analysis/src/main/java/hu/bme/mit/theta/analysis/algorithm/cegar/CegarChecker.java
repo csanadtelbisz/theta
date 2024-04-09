@@ -29,9 +29,13 @@ import hu.bme.mit.theta.common.logging.Logger;
 import hu.bme.mit.theta.common.logging.Logger.Level;
 import hu.bme.mit.theta.common.logging.NullLogger;
 
+import hu.bme.mit.theta.common.visualization.Graph;
+import hu.bme.mit.theta.common.visualization.writer.GraphvizWriter;
 import hu.bme.mit.theta.common.visualization.writer.JSONWriter;
 import hu.bme.mit.theta.common.visualization.writer.WebDebuggerLogger;
 
+import java.io.FileWriter;
+import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -137,12 +141,15 @@ public final class CegarChecker<S extends State, A extends Action, P extends Pre
         }
 
         assert cegarResult != null;
+
         logger.write(Level.RESULT, "%s%n", cegarResult);
         logger.write(Level.INFO, "%s%n", stats);
         System.err.println("Abstractor time: " + stats.getAbstractorTimeMs());
         System.err.println("Refiner time: " + stats.getRefinerTimeMs());
         System.err.println("COI time: " + COILogger.coiTimer);
         System.err.println("TransFunc time: " + COILogger.transFuncTimer);
+        System.err.println("Static COI direct time: " + COILogger.staticCoiDirectTimer);
+        System.err.println("Static COI indirect time: " + COILogger.staticCoiIndirectTimer);
         System.err.println("COI NOP labels: " + COILogger.nopsList);
         System.err.println("COI havoc labels: " + COILogger.havocsList);
         System.err.println("COI all labels: " + COILogger.allLabelsList);
@@ -150,6 +157,7 @@ public final class CegarChecker<S extends State, A extends Action, P extends Pre
         System.err.println("Explored actions: " + COILogger.exploredActionsList);
         System.err.println("Static NOP labels: " + COILogger.staticNops);
         System.err.println("Static all labels: " + COILogger.staticAllLabels);
+
         return cegarResult;
     }
 
