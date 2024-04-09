@@ -111,7 +111,7 @@ class AbstractKind<S : ExprState, A : ExprAction, P : Prec, R : Refutation> @Jvm
             abstractorResult!!.isSafe -> SafetyResult.safe() // safety proven by BMC/KInd with the current abstraction
             !abstractorResult.isUnsafe -> SafetyResult.unknown() // no counterexample found, no safety proven
             refinerResult!!.isUnsafe -> SafetyResult.unsafe(refinerResult.asUnsafe().cex) // counterexample found by BMC
-            else -> error("Precision could not be refined while spurious counterexample is found.")
+            else -> SafetyResult.unknown() // abstract counterexample found but precision could not be refined
         }
         return cegarResult to prec
     }
