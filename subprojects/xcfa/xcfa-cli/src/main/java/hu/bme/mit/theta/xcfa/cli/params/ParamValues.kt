@@ -62,6 +62,7 @@ enum class Backend {
     CEGAR,
     BOUNDED,
     ABSTRACT_BOUNDED,
+    OC,
     LAZY,
     PORTFOLIO,
     NONE,
