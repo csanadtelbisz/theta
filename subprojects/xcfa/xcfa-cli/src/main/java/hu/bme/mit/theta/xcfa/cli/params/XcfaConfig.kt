@@ -298,8 +298,8 @@ data class InterpolationConfig(
     ) : Config
 
 data class OcConfig(
-    @Parameter(names = ["--decision-procedure"], description = "Decision procedure for ordering-consistency check")
-    var decisionProcedure: OcDecisionProcedureType = OcDecisionProcedureType.BASIC,
+    @Parameter(names = ["--oc-decision-procedure"], description = "Decision procedure for ordering-consistency check")
+    var decisionProcedure: OcDecisionProcedureType = OcDecisionProcedureType.PROPAGATOR,
 ) : SpecBackendConfig
 
 data class PortfolioConfig(
@@ -310,6 +310,9 @@ data class PortfolioConfig(
 data class OutputConfig(
     @Parameter(names = ["--version"], description = "Display version", help = true)
     var versionInfo: Boolean = false,
+
+    @Parameter(names = ["--enable-output"], description = "Enable output files")
+    var enableOutput: Boolean = false,
 
     @Parameter(names = ["--output-directory"], description = "Specify the directory where the result files are stored")
     var resultFolder: File = Paths.get("./").toFile(),

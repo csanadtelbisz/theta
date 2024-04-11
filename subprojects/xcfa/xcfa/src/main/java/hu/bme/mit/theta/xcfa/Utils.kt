@@ -23,7 +23,10 @@ import hu.bme.mit.theta.core.decl.VarDecl
 import hu.bme.mit.theta.core.stmt.AssignStmt
 import hu.bme.mit.theta.core.stmt.AssumeStmt
 import hu.bme.mit.theta.core.stmt.HavocStmt
+import hu.bme.mit.theta.core.stmt.MemoryAssignStmt
 import hu.bme.mit.theta.core.type.Expr
+import hu.bme.mit.theta.core.type.anytype.Dereference
+import hu.bme.mit.theta.core.type.anytype.RefExpr
 import hu.bme.mit.theta.core.type.booltype.BoolType
 import hu.bme.mit.theta.core.utils.ExprUtils
 import hu.bme.mit.theta.core.utils.StmtUtils
@@ -118,7 +121,7 @@ inline val XcfaLabel.isAtomicBegin: Boolean get() = this is FenceLabel && "ATOMI
 inline val XcfaLabel.isAtomicEnd: Boolean get() = this is FenceLabel && "ATOMIC_END" in labels
 
 /**
- * The list of mutexes acquired by the label.
+ * The set of mutexes acquired by the label.
  */
 inline val FenceLabel.acquiredMutexes: Set<String>
     get() = labels.mapNotNull {
@@ -131,7 +134,7 @@ inline val FenceLabel.acquiredMutexes: Set<String>
     }.toSet()
 
 /**
- * The list of mutexes released by the label.
+ * The set of mutexes released by the label.
  */
 inline val FenceLabel.releasedMutexes: Set<String>
     get() = labels.mapNotNull {
@@ -142,6 +145,28 @@ inline val FenceLabel.releasedMutexes: Set<String>
             else -> null
         }
     }.toSet()
+
+/**
+ * The set of mutexes acquired embedded into each other.
+ */
+inline val XcfaEdge.acquiredEmbeddedFenceVars: Set<String>
+    get() {
+        val acquired = mutableSetOf<String>()
+        val toVisit = mutableListOf<Pair<XcfaEdge, Set<String>>>(this to setOf())
+        while (toVisit.isNotEmpty()) {
+            val (visiting, mutexes) = toVisit.removeFirst()
+            val newMutexes = mutexes.toMutableSet()
+            acquired.addAll(visiting.getFlatLabels().flatMap { fence ->
+                if (fence !is FenceLabel) return@flatMap emptyList()
+                fence.acquiredMutexes + fence.labels.filter { it.startsWith("start_cond_wait") }
+                    .map { it.substring("start_cond_wait".length + 1, it.length - 1).split(",")[0] }
+            })
+            if (visiting.mutexOperations(newMutexes)) {
+                visiting.target.outgoingEdges.forEach { toVisit.add(it to newMutexes) }
+            }
+        }
+        return acquired
+    }
 
 /**
  * Returns the list of accessed variables by the edge associated with an AccessType object.
@@ -157,6 +182,15 @@ fun XcfaLabel.collectVarsWithAccessType(): VarAccessMap = when (this) {
         when (stmt) {
             is HavocStmt<*> -> mapOf(stmt.varDecl to WRITE)
             is AssignStmt<*> -> ExprUtils.getVars(stmt.expr).associateWith { READ } + mapOf(stmt.varDecl to WRITE)
+            is MemoryAssignStmt<*, *> -> {
+                var expr: Expr<*> = stmt.deref
+                while (expr is Dereference<*, *>) {
+                    expr = expr.array
+                }
+                expr as RefExpr<*>
+                ExprUtils.getVars(stmt.expr).associateWith { READ } + mapOf(expr.decl as VarDecl<*> to WRITE)
+            }
+
             else -> StmtUtils.getVars(stmt).associateWith { READ }
         }
     }
