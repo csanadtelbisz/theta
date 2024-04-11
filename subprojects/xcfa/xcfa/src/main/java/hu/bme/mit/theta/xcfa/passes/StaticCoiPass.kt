@@ -44,7 +44,6 @@ class StaticCoiPass : ProcedurePass {
                 if (!label.canBeSimplified || isObserved(label)) {
                     kept.add(label)
                 } else {
-                    System.err.println(label)
                     COILogger.incStaticNops()
                 }
             }
