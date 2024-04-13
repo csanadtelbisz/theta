@@ -68,6 +68,7 @@ class CPasses(checkOverflow: Boolean, parseContext: ParseContext, uniqueWarningL
         UnusedVarPass(uniqueWarningLogger),
         EmptyEdgeRemovalPass(),
         UnusedLocRemovalPass(),
+        NoReferencePass(),
     )
 )
 
