@@ -17,6 +17,7 @@
 package hu.bme.mit.theta.core.type.anytype;
 
 import hu.bme.mit.theta.common.Utils;
+import hu.bme.mit.theta.core.decl.VarDecl;
 import hu.bme.mit.theta.core.model.Valuation;
 import hu.bme.mit.theta.core.type.Expr;
 import hu.bme.mit.theta.core.type.LitExpr;
@@ -70,7 +71,8 @@ public final class Reference<A extends Type, T extends Type> implements Expr<A> 
     @Override
     public Expr<A> withOps(List<? extends Expr<?>> ops) {
         checkState(ops.size() == 1);
-        return Reference.of(ops.get(0), type);
+        checkState(ops.get(0) instanceof RefExpr<?> && ((RefExpr) ops.get(0)).getDecl() instanceof VarDecl<?>, "Don't transform references to constants.");
+        return Reference.of((Expr<T>) ops.get(0), type);
     }
 
     @Override

@@ -26,7 +26,7 @@ import hu.bme.mit.theta.core.model.ImmutableValuation;
 import hu.bme.mit.theta.core.stmt.AssumeStmt;
 import hu.bme.mit.theta.core.type.Expr;
 import hu.bme.mit.theta.core.type.LitExpr;
-import hu.bme.mit.theta.core.type.anytype.Dereference;
+import hu.bme.mit.theta.core.type.anytype.Exprs;
 import hu.bme.mit.theta.core.type.arraytype.ArrayType;
 import hu.bme.mit.theta.core.type.booltype.BoolType;
 import hu.bme.mit.theta.frontend.ParseContext;
@@ -474,8 +474,9 @@ public class FunctionVisitor extends CBaseVisitor<CStatement> {
                         LitExpr<?> currentValue = ptrType.getNullValue();
                         LitExpr<?> unitValue = ptrType.getUnitValue();
                         for (Tuple2<Optional<CStatement>, CStatement> statement : initializerList.getStatements()) {
+//                            checkState(false, "Code here seems to be buggy");
                             final var expr = statement.get2().getExpression();
-                            final var deref = Dereference.of(cast(declaration.getVarDecls().get(0).getRef(), ptrType.getSmtType()), cast(currentValue, ptrType.getSmtType()), expr.getType());
+                            final var deref = Exprs.Dereference(cast(declaration.getVarDecls().get(0).getRef(), currentValue.getType()), cast(currentValue, currentValue.getType()), expr.getType());
                             CAssignment cAssignment = new CAssignment(deref, statement.get2(), "=", parseContext);
                             recordMetadata(ctx, cAssignment);
                             compound.getcStatementList().add(cAssignment);

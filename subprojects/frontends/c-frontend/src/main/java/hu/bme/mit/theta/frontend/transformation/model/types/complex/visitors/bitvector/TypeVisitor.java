@@ -22,6 +22,8 @@ import hu.bme.mit.theta.core.type.fptype.FpType;
 import hu.bme.mit.theta.frontend.ParseContext;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.CComplexType;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.CVoid;
+import hu.bme.mit.theta.frontend.transformation.model.types.complex.compound.CArray;
+import hu.bme.mit.theta.frontend.transformation.model.types.complex.compound.CPointer;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.compound.CStruct;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.integer.CInteger;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.integer.Signed;
@@ -72,5 +74,14 @@ public class TypeVisitor extends CComplexType.CComplexTypeVisitor<Void, Type> {
     @Override
     public Type visit(CStruct type, Void param) {
         return Bool();
+    }
+
+
+    public Type visit(CPointer type, Void param) {
+        return CComplexType.getUnsignedInt(parseContext).getSmtType();
+    }
+
+    public Type visit(CArray type, Void param) {
+        return CComplexType.getUnsignedInt(parseContext).getSmtType();
     }
 }
