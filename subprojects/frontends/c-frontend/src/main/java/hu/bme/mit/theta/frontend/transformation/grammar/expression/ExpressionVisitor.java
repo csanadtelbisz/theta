@@ -28,9 +28,11 @@ import hu.bme.mit.theta.core.type.Type;
 import hu.bme.mit.theta.core.type.abstracttype.AbstractExprs;
 import hu.bme.mit.theta.core.type.abstracttype.DivExpr;
 import hu.bme.mit.theta.core.type.abstracttype.ModExpr;
+import hu.bme.mit.theta.core.type.anytype.Dereference;
+import hu.bme.mit.theta.core.type.anytype.Exprs;
 import hu.bme.mit.theta.core.type.anytype.IteExpr;
 import hu.bme.mit.theta.core.type.anytype.RefExpr;
-import hu.bme.mit.theta.core.type.arraytype.ArrayReadExpr;
+import hu.bme.mit.theta.core.type.anytype.Reference;
 import hu.bme.mit.theta.core.type.booltype.BoolExprs;
 import hu.bme.mit.theta.core.type.booltype.BoolType;
 import hu.bme.mit.theta.core.type.bvtype.BvAndExpr;
@@ -56,7 +58,6 @@ import hu.bme.mit.theta.frontend.transformation.model.statements.CStatement;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.CComplexType;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.compound.CArray;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.compound.CPointer;
-import hu.bme.mit.theta.frontend.transformation.model.types.complex.real.CReal;
 import org.kframework.mpfr.BigFloat;
 import org.kframework.mpfr.BinaryMathContext;
 
@@ -77,6 +78,7 @@ import static hu.bme.mit.theta.core.type.abstracttype.AbstractExprs.Ite;
 import static hu.bme.mit.theta.core.type.abstracttype.AbstractExprs.Mod;
 import static hu.bme.mit.theta.core.type.abstracttype.AbstractExprs.Neq;
 import static hu.bme.mit.theta.core.type.abstracttype.AbstractExprs.Sub;
+import static hu.bme.mit.theta.core.type.anytype.Exprs.Reference;
 import static hu.bme.mit.theta.core.type.fptype.FpExprs.FpType;
 import static hu.bme.mit.theta.core.type.inttype.IntExprs.Int;
 import static hu.bme.mit.theta.core.utils.TypeUtils.cast;
@@ -463,7 +465,7 @@ public class ExpressionVisitor extends CBaseVisitor<Expr<?>> {
 
     @Override
     public Expr<?> visitCastExpressionCast(CParser.CastExpressionCastContext ctx) {
-        CComplexType actualType = ctx.typeName().specifierQualifierList().accept(typeVisitor).getActualType();
+        CComplexType actualType = ctx.declarationSpecifiers().accept(typeVisitor).getActualType();
         Expr<?> expr = actualType.castTo(ctx.castExpression().accept(this));
         parseContext.getMetadata().create(expr, "cType", actualType);
         expr = actualType.castTo(expr);
@@ -479,7 +481,7 @@ public class ExpressionVisitor extends CBaseVisitor<Expr<?>> {
             LitExpr<?> zero = signedInt.getNullValue();
             parseContext.getMetadata().create(zero, "cType", signedInt);
             return zero;
-        } else {
+        } else if (ctx.typeName() != null) {
             final Optional<CComplexType> type = typedefVisitor.getType(ctx.typeName().getText())
                     .or(() -> Optional.ofNullable(CComplexType.getType(ctx.typeName().getText(), parseContext)))
                     .or(() -> Optional.ofNullable(CComplexType.getType(getVar(ctx.typeName().getText()).getRef(), parseContext)));
@@ -494,6 +496,11 @@ public class ExpressionVisitor extends CBaseVisitor<Expr<?>> {
                 parseContext.getMetadata().create(zero, "cType", signedInt);
                 return zero;
             }
+        } else { // expr != null
+            final var expr = ctx.expression().accept(this);
+            final var type = CComplexType.getType(expr, parseContext);
+            LitExpr<?> value = CComplexType.getSignedInt(parseContext).getValue("" + type.width() / 8);
+            return value;
         }
 
     }
@@ -566,24 +573,22 @@ public class ExpressionVisitor extends CBaseVisitor<Expr<?>> {
             case "*":
                 type = CComplexType.getType(accept, parseContext);
                 checkState(type instanceof CPointer, "Dereferencing non-pointer expression is not allowed!");
-                return dereference(accept, (CPointer) type);
+                return dereference(accept, CComplexType.getUnsignedLong(parseContext).getNullValue(), (CPointer) type);
         }
         return accept;
     }
 
-    private Expr<?> dereference(Expr<?> accept, CPointer type) {
-        checkState(!(CComplexType.getType(accept, parseContext) instanceof CReal), "Float pointers are not yet supported!", parseContext);
-        Dereference<?, Type> of = Dereference.of(accept, type.getEmbeddedType().getSmtType());
-        parseContext.getMetadata().create(of, "cType", type.getEmbeddedType());
+    @SuppressWarnings("unchecked")
+    private <T extends Type> Expr<?> dereference(Expr<?> accept, Expr<?> offset, CComplexType type) {
+        Dereference<T, Type> of = Exprs.Dereference((Expr<T>) accept, (Expr<T>) offset, type.getSmtType());
+        parseContext.getMetadata().create(of, "cType", type);
         return of;
     }
 
     private Expr<?> reference(RefExpr<?> accept) {
-        checkState(!(CComplexType.getType(accept, parseContext) instanceof CReal), "Float pointers are not yet supported!", parseContext);
-        Reference<Type, ?> of = Reference.of(accept, CComplexType.getUnsignedLong(parseContext).getSmtType());
-        parseContext.getMetadata().create(of, "cType", new CPointer(null, CComplexType.getType(accept, parseContext), parseContext));
-        parseContext.getMetadata().create(accept, "referenced", true);
-        parseContext.getMetadata().create(accept, "ptrValue", of.getId());
+        final var newType = new CPointer(null, CComplexType.getType(accept, parseContext), parseContext);
+        Reference<Type, ?> of = Reference(accept, newType.getSmtType());
+        parseContext.getMetadata().create(of, "cType", newType);
         return of;
     }
 
@@ -609,10 +614,21 @@ public class ExpressionVisitor extends CBaseVisitor<Expr<?>> {
                 int size = ctx.postfixExpressionBrackets().size();
                 for (int i = 0; i < size; i++) {
                     CComplexType arrayType = CComplexType.getType(primary, parseContext);
-                    checkState(arrayType instanceof CArray, "Non-array expression used as array!");
-                    Expr<?> index = ctx.postfixExpressionBrackets().get(i).accept(this);
-                    primary = ArrayReadExpr.create(primary, index);
-                    parseContext.getMetadata().create(primary, "cType", ((CArray) arrayType).getEmbeddedType());
+                    if (arrayType instanceof CArray) {
+                        CComplexType elemType = ((CArray) arrayType).getEmbeddedType();
+                        Type ptrType = CComplexType.getUnsignedLong(parseContext).getSmtType();
+                        Expr<?> index = ctx.postfixExpressionBrackets().get(i).accept(this);
+                        primary = dereference(primary, cast(index, ptrType), elemType);
+                        parseContext.getMetadata().create(primary, "cType", elemType);
+                    } else if (arrayType instanceof CPointer) {
+                        CComplexType elemType = ((CPointer) arrayType).getEmbeddedType();
+                        Type ptrType = CComplexType.getUnsignedLong(parseContext).getSmtType();
+                        Expr<?> index = ctx.postfixExpressionBrackets().get(i).accept(this);
+                        primary = dereference(primary, cast(index, ptrType), elemType);
+                        parseContext.getMetadata().create(primary, "cType", elemType);
+                    } else {
+                        throw new RuntimeException("Non-array expression used as array!");
+                    }
                 }
                 size = ctx.postfixExpressionMemberAccess().size();
                 if (size > 0) {

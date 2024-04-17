@@ -38,11 +38,16 @@ class CPasses(checkOverflow: Boolean, parseContext: ParseContext, uniqueWarningL
         SvCompIntrinsicsPass(),
         FpFunctionsToExprsPass(parseContext),
         CLibraryFunctionsPass(),
+        ReferenceElimination(parseContext),
+        MallocFunctionPass(parseContext),
     ),
     listOf(
         // optimizing
         SimplifyExprsPass(parseContext),
         LoopUnrollPass(),
+        SimplifyExprsPass(parseContext),
+        EmptyEdgeRemovalPass(),
+        UnusedLocRemovalPass(),
     ),
     listOf(
         // trying to inline procedures
@@ -52,6 +57,7 @@ class CPasses(checkOverflow: Boolean, parseContext: ParseContext, uniqueWarningL
     ),
     listOf(
         // handling remaining function calls
+        NoSideEffectPass(parseContext),
         NondetFunctionPass(),
         LbePass(parseContext),
         NormalizePass(), // needed after lbe, TODO
@@ -61,6 +67,9 @@ class CPasses(checkOverflow: Boolean, parseContext: ParseContext, uniqueWarningL
         UnusedVarPass(uniqueWarningLogger),
         EmptyEdgeRemovalPass(),
         UnusedLocRemovalPass(),
+    ),
+    listOf(
+        LiteralDerefPass(parseContext)
     )
 )
 

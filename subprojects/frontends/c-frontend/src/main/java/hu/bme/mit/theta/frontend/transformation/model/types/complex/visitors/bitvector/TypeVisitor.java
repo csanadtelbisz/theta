@@ -17,13 +17,13 @@
 package hu.bme.mit.theta.frontend.transformation.model.types.complex.visitors.bitvector;
 
 import hu.bme.mit.theta.core.type.Type;
-import hu.bme.mit.theta.core.type.arraytype.ArrayType;
 import hu.bme.mit.theta.core.type.bvtype.BvType;
 import hu.bme.mit.theta.core.type.fptype.FpType;
 import hu.bme.mit.theta.frontend.ParseContext;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.CComplexType;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.CVoid;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.compound.CArray;
+import hu.bme.mit.theta.frontend.transformation.model.types.complex.compound.CPointer;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.compound.CStruct;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.integer.CInteger;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.integer.Signed;
@@ -62,12 +62,6 @@ public class TypeVisitor extends CComplexType.CComplexTypeVisitor<Void, Type> {
     }
 
     @Override
-    public Type visit(CArray type, Void param) {
-        return ArrayType.of(CComplexType.getUnsignedLong(parseContext).getSmtType(),
-                type.getEmbeddedType().getSmtType());
-    }
-
-    @Override
     public Type visit(CInteger type, Void param) {
         return BvType.of(type.width(), type instanceof Signed);
     }
@@ -80,5 +74,14 @@ public class TypeVisitor extends CComplexType.CComplexTypeVisitor<Void, Type> {
     @Override
     public Type visit(CStruct type, Void param) {
         return Bool();
+    }
+
+
+    public Type visit(CPointer type, Void param) {
+        return CComplexType.getUnsignedInt(parseContext).getSmtType();
+    }
+
+    public Type visit(CArray type, Void param) {
+        return CComplexType.getUnsignedInt(parseContext).getSmtType();
     }
 }

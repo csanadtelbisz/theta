@@ -17,8 +17,10 @@ package hu.bme.mit.theta.xcfa.analysis.por
 
 import hu.bme.mit.theta.analysis.LTS
 import hu.bme.mit.theta.core.decl.Decl
+import hu.bme.mit.theta.core.decl.Decls
 import hu.bme.mit.theta.core.decl.VarDecl
 import hu.bme.mit.theta.core.type.Type
+import hu.bme.mit.theta.core.type.booltype.BoolExprs.Bool
 import hu.bme.mit.theta.xcfa.*
 import hu.bme.mit.theta.xcfa.analysis.XcfaAction
 import hu.bme.mit.theta.xcfa.analysis.XcfaState
@@ -63,6 +65,13 @@ open class XcfaSporLts(protected val xcfa: XCFA) : LTS<XcfaState<*>, XcfaAction>
      */
     protected val backwardTransitions: MutableSet<XcfaEdge> = mutableSetOf()
 
+    /**
+     * Variables associated to mutex identifiers. TODO: this should really be solved by storing VarDecls in FenceLabel.
+     */
+    protected val dereferenceVar = Decls.Var("dereferenceVar", Bool())
+    protected val fenceVars: MutableMap<String, VarDecl<*>> = mutableMapOf("dereferenceVar" to dereferenceVar)
+    private val String.fenceVar get() = fenceVars.getOrPut(this) { Decls.Var(this, Bool()) }
+
     init {
         collectBackwardTransitions()
     }
@@ -95,8 +104,10 @@ open class XcfaSporLts(protected val xcfa: XCFA) : LTS<XcfaState<*>, XcfaAction>
      * @param allEnabledActions the enabled actions in the present state
      * @return the possible starting actions of a source set
      */
-    protected fun getSourceSetFirstActions(state: XcfaState<*>,
-        allEnabledActions: Collection<XcfaAction>): Collection<Collection<XcfaAction>> {
+    protected fun getSourceSetFirstActions(
+        state: XcfaState<*>,
+        allEnabledActions: Collection<XcfaAction>
+    ): Collection<Collection<XcfaAction>> {
         val enabledActionsByProcess = allEnabledActions.groupBy(XcfaAction::pid)
         val enabledProcesses = enabledActionsByProcess.keys.toList().shuffled(random)
         return enabledProcesses.map { pid ->
@@ -116,8 +127,10 @@ open class XcfaSporLts(protected val xcfa: XCFA) : LTS<XcfaState<*>, XcfaAction>
      * @param enabledActionsByProcess the enabled actions grouped by processes
      * @return the set of first processes
      */
-    private fun checkMutexBlocks(state: XcfaState<*>, pid: Int, firstProcesses: MutableSet<Int>,
-        enabledActionsByProcess: Map<Int, List<XcfaAction>>) {
+    private fun checkMutexBlocks(
+        state: XcfaState<*>, pid: Int, firstProcesses: MutableSet<Int>,
+        enabledActionsByProcess: Map<Int, List<XcfaAction>>
+    ) {
         val processState = checkNotNull(state.processes[pid])
         if (!processState.paramsInitialized) return
         val disabledOutEdges = processState.locs.peek().outgoingEdges.filter { edge ->
@@ -145,13 +158,16 @@ open class XcfaSporLts(protected val xcfa: XCFA) : LTS<XcfaState<*>, XcfaAction>
      * @param firstActions   the actions that will be added to the source set as the first actions
      * @return a source set of enabled actions
      */
-    private fun calculateSourceSet(enabledActions: Collection<XcfaAction>,
-        firstActions: Collection<XcfaAction>): Set<XcfaAction> {
+    private fun calculateSourceSet(
+        enabledActions: Collection<XcfaAction>,
+        firstActions: Collection<XcfaAction>
+    ): Set<XcfaAction> {
         if (firstActions.any(::isBackwardAction)) {
             return enabledActions.toSet()
         }
         val sourceSet = firstActions.toMutableSet()
-        val otherActions = (enabledActions.toMutableSet() subtract sourceSet).toMutableSet() // actions not in the source set
+        val otherActions =
+            (enabledActions.toMutableSet() subtract sourceSet).toMutableSet() // actions not in the source set
         var addedNewAction = true
         while (addedNewAction) {
             addedNewAction = false
@@ -198,6 +214,7 @@ open class XcfaSporLts(protected val xcfa: XCFA) : LTS<XcfaState<*>, XcfaAction>
 
     /**
      * Returns the global variables that an edge uses (it is present in one of its labels).
+     * Mutex variables are also considered to avoid running into a deadlock and stop exploration.
      *
      * @param edge whose global variables are to be returned
      * @return the set of used global variables
@@ -205,8 +222,15 @@ open class XcfaSporLts(protected val xcfa: XCFA) : LTS<XcfaState<*>, XcfaAction>
     private fun getDirectlyUsedSharedObjects(edge: XcfaEdge): Set<VarDecl<out Type>> {
         val globalVars = xcfa.vars.map(XcfaGlobalVar::wrappedVar)
         return edge.getFlatLabels().flatMap { label ->
-            label.collectVars().filter { it in globalVars }
-        }.toSet()
+            label.collectVars().filter { it in globalVars } union
+                ((label as? FenceLabel)?.labels
+                    ?.filter { it.startsWith("start_cond_wait") || it.startsWith("cond_signal") }
+                    ?.map { it.substringAfter("(").substringBefore(")").split(",")[0] }
+                    ?.map { it.fenceVar } ?: listOf()) union
+                (if (label.references.isNotEmpty()) setOf(dereferenceVar) else setOf())
+        }.toSet() union edge.acquiredEmbeddedFenceVars.let { mutexes ->
+            if (mutexes.size <= 1) setOf() else mutexes.map { it.fenceVar }
+        }
     }
 
     /**
@@ -262,8 +286,10 @@ open class XcfaSporLts(protected val xcfa: XCFA) : LTS<XcfaState<*>, XcfaAction>
      * transition
      * @return the set of encountered shared objects
      */
-    private fun getSharedObjectsWithBFS(startTransition: XcfaEdge,
-        goFurther: Predicate<XcfaEdge>): Set<Decl<out Type>> {
+    private fun getSharedObjectsWithBFS(
+        startTransition: XcfaEdge,
+        goFurther: Predicate<XcfaEdge>
+    ): Set<Decl<out Type>> {
         val vars = mutableSetOf<Decl<out Type>>()
         val exploredEdges = mutableListOf<XcfaEdge>()
         val edgesToExplore = mutableListOf<XcfaEdge>()

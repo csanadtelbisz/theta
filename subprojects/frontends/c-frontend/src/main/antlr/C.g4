@@ -31,7 +31,7 @@ grammar C;
 
 
 primaryExpression
-    :   '__PRETTY_FUNC__'                                                   # gccPrettyFunc
+    :   PRETTY_FUNC                                                         # gccPrettyFunc
     |   Identifier                                                          # primaryExpressionId
     |   Constant                                                            # primaryExpressionConstant
     |   StringLiteral+                                                      # primaryExpressionStrings
@@ -109,7 +109,7 @@ unaryExpressionCast
     :   unaryOperator castExpression
     ;
 unaryExpressionSizeOrAlignOf
-    :   ('sizeof' | '_Alignof') '(' typeName ')'
+    :   ('sizeof' | '_Alignof') '(' (typeName | expression) ')'
     ;
 //unaryExpressionAddressof
 //    :   '&&' Identifier
@@ -120,7 +120,7 @@ unaryOperator
     ;
 
 castExpression
-    :   '__extension__'? '(' typeName ')' castExpression    #castExpressionCast
+    :   '__extension__'? '(' declarationSpecifiers ')' castExpression    #castExpressionCast
     |   unaryExpression                                     #castExpressionUnaryExpression
 //    |   DigitSequence                                       #castExpressionDigitSequence
     ;
@@ -554,9 +554,9 @@ functionDefinition
 //declarationList
 //    :   declaration+
 //    ;
-
+PRETTY_FUNC: '__PRETTY_FUNCTION__';
 Extension: '__extension__' -> skip; // Hack to make .i files work (SV-COMP)
-VoidSizeof: '(void) sizeof' -> skip; // Hack to make .i files work (SV-COMP)
+//VoidSizeof: '(void)' [ \t]* 'sizeof' -> skip; // Hack to make .i files work (SV-COMP)
 Auto : 'auto';
 Break : 'break';
 Case : 'case';
@@ -933,6 +933,7 @@ LineDirective
 
 PragmaDirective
     :   '#' Whitespace? 'pragma' Whitespace ~[\r\n]*
+        -> skip
     ;
 
 Whitespace
