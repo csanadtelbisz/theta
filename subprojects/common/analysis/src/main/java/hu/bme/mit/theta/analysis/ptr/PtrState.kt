@@ -13,20 +13,26 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  */
-plugins {
-    id("kotlin-common")
-}
+package hu.bme.mit.theta.analysis.ptr
 
-dependencies {
-    implementation(project(":theta-common"))
-    implementation(project(":theta-core"))
-    implementation(project(":theta-analysis"))
-    implementation(project(":theta-solver"))
-    implementation(project(":theta-solver-javasmt"))
-    implementation(project(":theta-solver-z3"))
-    implementation(project(":theta-xcfa"))
-    implementation(project(":theta-c-frontend"))
-    testImplementation(project(":theta-c2xcfa"))
-    testImplementation(project(":theta-solver-z3-legacy"))
-    testImplementation(project(":theta-solver"))
+import hu.bme.mit.theta.analysis.expr.ExprState
+import hu.bme.mit.theta.core.type.Expr
+import hu.bme.mit.theta.core.type.booltype.BoolType
+
+data class PtrState<S : ExprState>(
+    val innerState: S,
+    val lastWrites: WriteTriples = emptyMap(),
+    val nextCnt: Int = 0
+) : ExprState {
+
+    override fun isBottom(): Boolean {
+        return innerState.isBottom()
+    }
+
+    override fun toExpr(): Expr<BoolType> {
+        return innerState.toExpr()
+    }
+
+    fun withLastWrites(writeTriples: WriteTriples): PtrState<S> =
+        PtrState(innerState, writeTriples, nextCnt)
 }

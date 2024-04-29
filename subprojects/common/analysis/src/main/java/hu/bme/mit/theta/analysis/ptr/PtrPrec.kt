@@ -13,20 +13,16 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  */
-plugins {
-    id("kotlin-common")
-}
+package hu.bme.mit.theta.analysis.ptr
 
-dependencies {
-    implementation(project(":theta-common"))
-    implementation(project(":theta-core"))
-    implementation(project(":theta-analysis"))
-    implementation(project(":theta-solver"))
-    implementation(project(":theta-solver-javasmt"))
-    implementation(project(":theta-solver-z3"))
-    implementation(project(":theta-xcfa"))
-    implementation(project(":theta-c-frontend"))
-    testImplementation(project(":theta-c2xcfa"))
-    testImplementation(project(":theta-solver-z3-legacy"))
-    testImplementation(project(":theta-solver"))
+import hu.bme.mit.theta.analysis.Prec
+import hu.bme.mit.theta.core.decl.VarDecl
+import hu.bme.mit.theta.core.type.Expr
+
+data class PtrPrec<P : Prec>(val innerPrec: P, val trackedDerefParams: Collection<Expr<*>>,
+    val historyLength: Int = 0) : Prec {
+
+    fun ptrTop() = PtrPrec(innerPrec, TopCollection)
+
+    override fun getUsedVars(): Collection<VarDecl<*>> = innerPrec.usedVars
 }

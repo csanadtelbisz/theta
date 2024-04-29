@@ -16,8 +16,10 @@
 
 package hu.bme.mit.theta.xcfa.passes
 
+import hu.bme.mit.theta.core.decl.Decls.Var
 import hu.bme.mit.theta.core.decl.VarDecl
 import hu.bme.mit.theta.core.stmt.AssignStmt
+import hu.bme.mit.theta.core.type.abstracttype.AbstractExprs.Add
 import hu.bme.mit.theta.core.type.anytype.RefExpr
 import hu.bme.mit.theta.core.utils.TypeUtils.cast
 import hu.bme.mit.theta.frontend.ParseContext
@@ -30,8 +32,8 @@ import hu.bme.mit.theta.xcfa.model.*
  */
 class MallocFunctionPass(val parseContext: ParseContext) : ProcedurePass {
 
-    private var cnt = 0
-        get() = field++
+    private var cnt = 0 // counts upwards, uses 3k
+        get() = field.also { field += 2 }
 
     override fun run(builder: XcfaProcedureBuilder): XcfaProcedureBuilder {
         checkNotNull(builder.metaData["deterministic"])
@@ -44,10 +46,19 @@ class MallocFunctionPass(val parseContext: ParseContext) : ProcedurePass {
                     if (predicate((it.label as SequenceLabel).labels[0])) {
                         val invokeLabel = it.label.labels[0] as InvokeLabel
                         val ret = invokeLabel.params[0] as RefExpr<*>
-                        val assign = AssignStmt.of(
-                            cast(ret.decl as VarDecl<*>, ret.type), cast(CComplexType.getType(ret, parseContext).getValue("$cnt"), ret.type))
+                        val mallocCounter = Var("__malloc_$cnt", ret.type) // counts up, uses odd numbers
+                        builder.parent.addVar(
+                            XcfaGlobalVar(mallocCounter, CComplexType.getType(ret, parseContext).unitValue))
+                        val assign1 = AssignStmt.of(
+                            cast(mallocCounter, ret.type),
+                            cast(Add(mallocCounter.ref, CComplexType.getType(ret, parseContext).getValue("2")),
+                                ret.type))
+                        val assign2 = AssignStmt.of(
+                            cast(ret.decl as VarDecl<*>, ret.type), cast(mallocCounter.ref, ret.type))
                         builder.addEdge(XcfaEdge(it.source, it.target, SequenceLabel(
-                            listOf(StmtLabel(assign, metadata = invokeLabel.metadata)))))
+                            listOf(
+                                StmtLabel(assign1, metadata = invokeLabel.metadata),
+                                StmtLabel(assign2, metadata = invokeLabel.metadata)))))
                     } else {
                         builder.addEdge(it)
                     }

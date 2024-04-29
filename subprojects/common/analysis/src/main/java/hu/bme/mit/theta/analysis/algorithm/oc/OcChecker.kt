@@ -141,6 +141,13 @@ sealed class Reason {
     val expr: Expr<BoolType> get() = exprs.toAnd()
     infix fun and(other: Reason): Reason = CombinedReason(reasons + other.reasons)
     open fun toExprs(): List<Expr<BoolType>> = reasons.map { it.toExprs() }.flatten().filter { it !is TrueExpr }
+    override fun hashCode(): Int = exprs.hashCode()
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is Reason) return false
+        if (exprs != other.exprs) return false
+        return true
+    }
 }
 
 class CombinedReason(override val reasons: List<Reason>) : Reason()
@@ -172,17 +179,17 @@ class FromReadReason<E : Event>(rf: Relation<E>, w: Event, wAfterRf: Reason) :
  * either a relation (being enabled) or an event (being enabled - having a guard that evaluates to true).
  * The fix (closed by theory axioms) relations and the solver decision stack level are also stored.
  */
-internal class OcAssignment<E : Event>(
+class OcAssignment<E : Event> internal constructor(
     val relation: Relation<E>? = null,
     val event: E? = null,
     val rels: Array<Array<Reason?>>,
     val solverLevel: Int = 0,
 ) {
 
-    constructor(rels: Array<Array<Reason?>>, e: E, solverLevel: Int = 0)
+    internal constructor(rels: Array<Array<Reason?>>, e: E, solverLevel: Int = 0)
         : this(event = e, rels = rels.copy(), solverLevel = solverLevel)
 
-    constructor(rels: Array<Array<Reason?>>, r: Relation<E>, solverLevel: Int = 0)
+    internal constructor(rels: Array<Array<Reason?>>, r: Relation<E>, solverLevel: Int = 0)
         : this(relation = r, rels = rels.copy(), solverLevel = solverLevel)
 
     override fun toString(): String {

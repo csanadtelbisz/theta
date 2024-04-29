@@ -26,6 +26,7 @@ import hu.bme.mit.theta.xcfa.model.StartLabel
 import hu.bme.mit.theta.xcfa.model.XCFA
 import hu.bme.mit.theta.xcfa.model.XcfaEdge
 import hu.bme.mit.theta.xcfa.model.XcfaProcedure
+import hu.bme.mit.theta.xcfa.pointsTo
 
 class XcfaCoiMultiThread(xcfa: XCFA) : XcfaCoi(xcfa) {
 
@@ -36,7 +37,7 @@ class XcfaCoiMultiThread(xcfa: XCFA) : XcfaCoi(xcfa) {
         set(value) {
             edgeToProcedure[this] = value
         }
-    private val interProcessObservers: MutableMap<XcfaEdge, Set<XcfaEdge>> = mutableMapOf()
+    private val interProcessObservation: MutableMap<XcfaEdge, MutableSet<XcfaEdge>> = mutableMapOf()
 
     data class ProcedureEntry(
         val procedure: XcfaProcedure,
@@ -111,7 +112,7 @@ class XcfaCoiMultiThread(xcfa: XCFA) : XcfaCoi(xcfa) {
 
                 visited.add(visiting)
                 val toAdd = (directObservers[visiting] ?: emptySet()) union
-                    (interProcessObservers[visiting]?.filter { edge ->
+                    (directObservers[visiting]?.filter { edge ->
                         procedures.any {
                             it.procedure.name == edge.procedure.name && it.scc >= edge.source.scc &&
                                 (it.procedure.name != visiting.procedure.name || it.procedure in multipleProcedures)
@@ -152,10 +153,11 @@ class XcfaCoiMultiThread(xcfa: XCFA) : XcfaCoi(xcfa) {
         val precVars = prec.usedVars
         val writtenVars = edge.collectVarsWithAccessType().filter { it.value.isWritten && it.key in precVars }
         if (writtenVars.isEmpty()) return
+        val writtenMemLocs = writtenVars.pointsTo(xcfa)
 
         xcfa.procedures.forEach { procedure ->
             procedure.edges.forEach {
-                addEdgeIfObserved(edge, it, writtenVars, precVars, interProcessObservers)
+                addEdgeIfObserved(edge, it, writtenVars, writtenMemLocs, precVars, interProcessObservers)
             }
         }
     }
