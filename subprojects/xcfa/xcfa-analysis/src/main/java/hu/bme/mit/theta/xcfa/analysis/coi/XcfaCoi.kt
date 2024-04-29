@@ -51,7 +51,7 @@ abstract class XcfaCoi(protected val xcfa: XCFA) {
 
     protected var lastPrec: Prec? = null
     protected var XcfaLocation.scc: Int by extension()
-    protected val directObservation: MutableMap<XcfaEdge, MutableSet<XcfaEdge>> = mutableMapOf()
+    protected val directObservers: MutableMap<XcfaEdge, Set<XcfaEdge>> = mutableMapOf()
 
     abstract val lts: LTS<S, A>
 
@@ -136,7 +136,7 @@ abstract class XcfaCoi(protected val xcfa: XCFA) {
             val visiting = toVisit.removeFirst()
             visited.add(visiting)
             val currentVars = visiting.collectVarsWithAccessType()
-            addEdgeIfObserved(edge, visiting, writtenVars, writtenMemLocs, precVars, directObservation, currentVars)
+            addEdgeIfObserved(edge, visiting, writtenVars, writtenMemLocs, precVars, directObservers, currentVars)
 
             if (writtenMemLocs.size <= 1) {
                 val currentWrites = currentVars.filter { it.value.isWritten }.map { it.key }
@@ -155,7 +155,7 @@ abstract class XcfaCoi(protected val xcfa: XCFA) {
     protected open fun addEdgeIfObserved(
         source: XcfaEdge, target: XcfaEdge, observableVars: VarAccessMap,
         writtenMemLocs: Set<LitExpr<*>>, precVars: Collection<VarDecl<*>>,
-        relation: MutableMap<XcfaEdge, MutableSet<XcfaEdge>>, vars: VarAccessMap = target.collectVarsWithAccessType()
+        relation: MutableMap<XcfaEdge, Set<XcfaEdge>>, vars: VarAccessMap = target.collectVarsWithAccessType()
     ) {
         var relevantAction = vars.any { it.value.isWritten && it.key in precVars }
         if (!relevantAction) {
@@ -172,7 +172,7 @@ abstract class XcfaCoi(protected val xcfa: XCFA) {
 
     protected abstract fun addToRelation(
         source: XcfaEdge, target: XcfaEdge,
-        relation: MutableMap<XcfaEdge, MutableSet<XcfaEdge>>
+        relation: MutableMap<XcfaEdge, Set<XcfaEdge>>
     )
 
     protected fun isRealObserver(edge: XcfaEdge) = edge.label.collectAssumesVars().isNotEmpty()

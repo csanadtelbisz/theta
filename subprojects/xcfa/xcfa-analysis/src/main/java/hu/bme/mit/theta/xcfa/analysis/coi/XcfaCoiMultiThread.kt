@@ -19,8 +19,8 @@ package hu.bme.mit.theta.xcfa.analysis.coi
 import hu.bme.mit.theta.analysis.LTS
 import hu.bme.mit.theta.analysis.Prec
 import hu.bme.mit.theta.analysis.algorithm.cegar.COILogger
-import hu.bme.mit.theta.xcfa.getFlatLabels
 import hu.bme.mit.theta.xcfa.collectVarsWithAccessType
+import hu.bme.mit.theta.xcfa.getFlatLabels
 import hu.bme.mit.theta.xcfa.isWritten
 import hu.bme.mit.theta.xcfa.model.StartLabel
 import hu.bme.mit.theta.xcfa.model.XCFA
@@ -37,7 +37,7 @@ class XcfaCoiMultiThread(xcfa: XCFA) : XcfaCoi(xcfa) {
         set(value) {
             edgeToProcedure[this] = value
         }
-    private val interProcessObservation: MutableMap<XcfaEdge, MutableSet<XcfaEdge>> = mutableMapOf()
+    private val interProcessObservers: MutableMap<XcfaEdge, Set<XcfaEdge>> = mutableMapOf()
 
     data class ProcedureEntry(
         val procedure: XcfaProcedure,
