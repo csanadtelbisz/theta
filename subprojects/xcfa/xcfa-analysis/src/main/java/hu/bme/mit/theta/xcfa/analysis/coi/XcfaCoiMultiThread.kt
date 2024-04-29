@@ -112,7 +112,7 @@ class XcfaCoiMultiThread(xcfa: XCFA) : XcfaCoi(xcfa) {
 
                 visited.add(visiting)
                 val toAdd = (directObservers[visiting] ?: emptySet()) union
-                    (directObservers[visiting]?.filter { edge ->
+                    (interProcessObservers[visiting]?.filter { edge ->
                         procedures.any {
                             it.procedure.name == edge.procedure.name && it.scc >= edge.source.scc &&
                                 (it.procedure.name != visiting.procedure.name || it.procedure in multipleProcedures)

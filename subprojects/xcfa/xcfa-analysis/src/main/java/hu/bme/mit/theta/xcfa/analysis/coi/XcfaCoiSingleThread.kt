@@ -65,7 +65,7 @@ class XcfaCoiSingleThread(xcfa: XCFA) : XcfaCoi(xcfa) {
     }
 
     override fun addToRelation(source: XcfaEdge, target: XcfaEdge, relation: MutableMap<XcfaEdge, Set<XcfaEdge>>) {
-        relation[target] = relation.getOrDefault(target, mutableSetOf()) + source
+        relation[target] = relation.getOrDefault(target, setOf()) + source
     }
 
     private fun collectedObservedEdges(realObservers: Set<XcfaEdge>) {
