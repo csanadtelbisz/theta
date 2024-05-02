@@ -21,6 +21,7 @@ class StaticCoiPass : ProcedurePass {
     override fun run(builder: XcfaProcedureBuilder): XcfaProcedureBuilder {
         if (!enabled) return builder
 
+        COILogger.startStaticCoiTimer()
         builder.parent.getProcedures().forEach { procedure ->
             procedure.getEdges().forEach { edge ->
                 val flatLabels = edge.getFlatLabels()
@@ -53,6 +54,7 @@ class StaticCoiPass : ProcedurePass {
                 builder.addEdge(edge.withLabel(SequenceLabel(kept, edge.label.metadata)))
             }
         }
+        COILogger.stopStaticCoiTimer()
 
         return builder
     }

@@ -148,6 +148,7 @@ public final class CegarChecker<S extends State, A extends Action, P extends Pre
         System.err.println("Refiner time: " + stats.getRefinerTimeMs());
         System.err.println("COI time: " + COILogger.coiTimer);
         System.err.println("TransFunc time: " + COILogger.transFuncTimer);
+        System.err.println("Static COI time: " + COILogger.staticCoiTimer);
         System.err.println("Static COI direct time: " + COILogger.staticCoiDirectTimer);
         System.err.println("Static COI indirect time: " + COILogger.staticCoiIndirectTimer);
         System.err.println("COI NOP labels: " + COILogger.nopsList);
