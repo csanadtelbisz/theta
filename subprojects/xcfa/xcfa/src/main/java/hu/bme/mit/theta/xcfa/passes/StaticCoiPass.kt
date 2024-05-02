@@ -16,6 +16,7 @@ class StaticCoiPass : ProcedurePass {
 
     private val directObservers: MutableMap<XcfaLabel, Set<XcfaLabel>> = mutableMapOf()
     private val interProcessObservers: MutableMap<XcfaLabel, Set<XcfaLabel>> = mutableMapOf()
+    private val interProcessVarObservers: MutableMap<VarDecl<*>, Set<XcfaLabel>> = mutableMapOf()
 
     override fun run(builder: XcfaProcedureBuilder): XcfaProcedureBuilder {
         if (!enabled) return builder
@@ -56,10 +57,13 @@ class StaticCoiPass : ProcedurePass {
         return builder
     }
 
-    private val XcfaLabel.canBeSimplified get() = this is StmtLabel && ((this.stmt is AssignStmt<*> && "_ret" !in this.stmt.varDecl.name) || this.stmt is HavocStmt<*>)
+    private val XcfaLabel.canBeSimplified
+        get() = this is StmtLabel &&
+            ((this.stmt is AssignStmt<*> && "_ret" !in this.stmt.varDecl.name) || this.stmt is HavocStmt<*>) &&
+            dereferencesWithAccessTypes.none { it.second.isWritten }
 
     private fun findDirectObservers(edge: XcfaEdge, label: XcfaLabel, remaining: List<XcfaLabel>) {
-        val writtenVars = label.collectVarsWithAccessType().filter { it.value.isWritten }
+        val writtenVars = label.collectVarsWithAccessType().filter { it.value.isWritten }.map { it.key }.toSet()
         if (writtenVars.isEmpty()) return
 
         val toVisit = mutableListOf(edge)
@@ -68,30 +72,32 @@ class StaticCoiPass : ProcedurePass {
             val visiting = toVisit.removeFirst()
             visited.add(visiting)
             val labels = if (visiting == edge) remaining else visiting.getFlatLabels()
-            addObservers(label, labels, writtenVars, directObservers)
+            labels.forEach { target ->
+                val vars = target.collectVarsWithAccessType()
+                if (vars.any { it.key in writtenVars && it.value.isRead }) {
+                    directObservers[label] = directObservers.getOrDefault(label, setOf()) + target
+                }
+            }
+
             toVisit.addAll(visiting.target.outgoingEdges.filter { it !in visited })
         }
     }
 
     private fun findIndirectObservers(label: XcfaLabel, builder: XcfaProcedureBuilder) {
-        val writtenVars = label.collectVarsWithAccessType().filter { it.value.isWritten }
+        val writtenVars = label.collectVarsWithAccessType().filter { it.value.isWritten }.map { it.key }.toSet()
         if (writtenVars.isEmpty()) return
 
-        builder.parent.getProcedures().forEach { procedure ->
-            procedure.getEdges().forEach {
-                addObservers(label, it.getFlatLabels(), writtenVars, interProcessObservers)
+        interProcessObservers[label] = writtenVars.flatMap { v ->
+            interProcessVarObservers.getOrPut(v) {
+                builder.parent.getProcedures().flatMap { procedure ->
+                    procedure.getEdges().flatMap { e ->
+                        e.getFlatLabels().filter { l ->
+                            l.collectVarsWithAccessType().any { it.key == v && it.value.isRead }
+                        }
+                    }
+                }.toSet()
             }
-        }
-    }
-
-    private fun addObservers(source: XcfaLabel, targets: List<XcfaLabel>,
-        observableVars: Map<VarDecl<*>, AccessType>, relation: MutableMap<XcfaLabel, Set<XcfaLabel>>) {
-        targets.forEach { target ->
-            val vars = target.collectVarsWithAccessType()
-            if (vars.any { it.key in observableVars && it.value.isRead }) {
-                relation[source] = relation.getOrDefault(source, setOf()) + target
-            }
-        }
+        }.toSet()
     }
 
     private fun isObserved(label: XcfaLabel): Boolean {
@@ -100,6 +106,7 @@ class StaticCoiPass : ProcedurePass {
         while (toVisit.isNotEmpty()) {
             val visiting = toVisit.removeFirst()
             if (visiting.collectAssumesVars().isNotEmpty()) return true
+            if (visiting.dereferencesWithAccessTypes.any { it.second.isWritten }) return true
 
             visited.add(visiting)
             val toAdd = (directObservers[visiting] ?: emptySet()) union (interProcessObservers[visiting] ?: emptySet())
