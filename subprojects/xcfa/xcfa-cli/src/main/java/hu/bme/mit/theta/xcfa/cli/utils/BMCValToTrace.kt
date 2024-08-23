@@ -21,6 +21,7 @@ import hu.bme.mit.theta.analysis.algorithm.bounded.PredStateExprHandler
 import hu.bme.mit.theta.analysis.algorithm.bounded.StateExprHandler
 import hu.bme.mit.theta.analysis.expl.ExplPrec
 import hu.bme.mit.theta.analysis.expl.ExplState
+import hu.bme.mit.theta.analysis.ptr.PtrState
 import hu.bme.mit.theta.analysis.pred.PredPrec
 import hu.bme.mit.theta.analysis.pred.PredState
 import hu.bme.mit.theta.core.decl.Decls.Var
@@ -58,7 +59,7 @@ fun valToAction(xcfa: XCFA, val1: Valuation, val2: Valuation): XcfaAction {
         })
 }
 
-fun valToState(valuation: Valuation, xcfa: XCFA): XcfaState<ExplState> {
+fun valToState(valuation: Valuation, xcfa: XCFA): XcfaState<PtrState<ExplState>> {
     val valMap = valuation.toMap()
     var i = 0
     val map: MutableMap<Int, XcfaLocation> = HashMap()
@@ -72,11 +73,11 @@ fun valToState(valuation: Valuation, xcfa: XCFA): XcfaState<ExplState> {
                 listOf(map[(valMap[valMap.keys.first { it.name == "__loc_" }] as IntLitExpr).value.toInt()])),
             varLookup = LinkedList(),
         ))),
-        ExplState.of(
+        PtrState(ExplState.of(
             ImmutableValuation.from(
                 valMap
                     .filter { it.key.name != "__loc_" && !it.key.name.startsWith("__temp_") }
-                    .map { Pair(Var("_" + "_" + it.key.name, it.key.type), it.value) }.toMap())),
+                    .map { Pair(Var("_" + "_" + it.key.name, it.key.type), it.value) }.toMap()))),
         mutexes = emptyMap(),
         threadLookup = emptyMap(),
         bottom = false

@@ -22,6 +22,7 @@ import hu.bme.mit.theta.analysis.algorithm.SafetyChecker
 import hu.bme.mit.theta.analysis.algorithm.bounded.AbstractKind
 import hu.bme.mit.theta.analysis.algorithm.bounded.BoundedChecker
 import hu.bme.mit.theta.analysis.algorithm.bounded.MonolithicExpr
+import hu.bme.mit.theta.analysis.ptr.PtrState
 import hu.bme.mit.theta.analysis.algorithm.bounded.StateExprHandler
 import hu.bme.mit.theta.analysis.expr.ExprAction
 import hu.bme.mit.theta.analysis.expr.ExprState
@@ -56,7 +57,7 @@ import hu.bme.mit.theta.xcfa.model.XcfaLocation
 
 fun getBoundedChecker(xcfa: XCFA, mcm: MCM,
     config: XcfaConfig<*, *>,
-    logger: Logger): SafetyChecker<XcfaState<*>, XcfaAction, XcfaPrec<*>> {
+    logger: Logger): SafetyChecker<XcfaState<PtrState<*>>, XcfaAction, XcfaPrec<*>> {
 
     val boundedConfig = config.backendConfig.specConfig as BoundedConfig
 
@@ -117,7 +118,7 @@ fun getAbstractBoundedChecker(xcfa: XCFA, mcm: MCM,
         refiner = SingleExprTraceRefiner.create(ref, precRefiner, logger),
         stateExprHandler = stateExprHandler,
         logger = logger
-    ) as SafetyChecker<XcfaState<*>, XcfaAction, XcfaPrec<*>>
+    ) as SafetyChecker<XcfaState<PtrState<*>>, XcfaAction, XcfaPrec<*>>
 
 }
 
