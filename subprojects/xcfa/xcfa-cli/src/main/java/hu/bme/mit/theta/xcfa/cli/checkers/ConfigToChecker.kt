@@ -18,6 +18,7 @@ package hu.bme.mit.theta.xcfa.cli.checkers
 
 import hu.bme.mit.theta.analysis.algorithm.SafetyChecker
 import hu.bme.mit.theta.analysis.algorithm.SafetyResult
+import hu.bme.mit.theta.analysis.ptr.PtrPrec
 import hu.bme.mit.theta.analysis.ptr.PtrState
 import hu.bme.mit.theta.common.logging.Logger
 import hu.bme.mit.theta.frontend.ParseContext
@@ -31,7 +32,7 @@ import hu.bme.mit.theta.xcfa.model.XCFA
 
 fun getChecker(xcfa: XCFA, mcm: MCM, config: XcfaConfig<*, *>, parseContext: ParseContext,
     logger: Logger,
-    uniqueLogger: Logger): SafetyChecker<out XcfaState<out PtrState<*>>, XcfaAction, XcfaPrec<*>> =
+    uniqueLogger: Logger): SafetyChecker<out XcfaState<out PtrState<*>>, XcfaAction, out XcfaPrec<*>> =
     if (config.backendConfig.inProcess) {
         InProcessChecker(xcfa, config, parseContext, logger)
     } else {
@@ -42,7 +43,7 @@ fun getChecker(xcfa: XCFA, mcm: MCM, config: XcfaConfig<*, *>, parseContext: Par
             Backend.OC -> getOcChecker(xcfa, mcm, config, logger)
             Backend.LAZY -> TODO()
             Backend.PORTFOLIO -> getPortfolioChecker(xcfa, mcm, config, parseContext, logger, uniqueLogger)
-            Backend.NONE -> SafetyChecker<XcfaState<PtrState<*>>, XcfaAction, XcfaPrec<*>> { _ -> SafetyResult.unknown() }
+            Backend.NONE -> SafetyChecker<XcfaState<PtrState<*>>, XcfaAction, XcfaPrec<PtrPrec<*>>> { _ -> SafetyResult.unknown() }
         }
     }
 

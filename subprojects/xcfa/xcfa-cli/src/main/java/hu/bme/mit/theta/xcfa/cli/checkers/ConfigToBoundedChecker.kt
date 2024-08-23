@@ -30,6 +30,7 @@ import hu.bme.mit.theta.analysis.expr.refinement.ExprTraceChecker
 import hu.bme.mit.theta.analysis.expr.refinement.PrecRefiner
 import hu.bme.mit.theta.analysis.expr.refinement.Refutation
 import hu.bme.mit.theta.analysis.expr.refinement.SingleExprTraceRefiner
+import hu.bme.mit.theta.analysis.ptr.PtrPrec
 import hu.bme.mit.theta.common.logging.Logger
 import hu.bme.mit.theta.core.decl.Decls
 import hu.bme.mit.theta.core.stmt.*
@@ -76,13 +77,13 @@ fun getBoundedChecker(xcfa: XCFA, mcm: MCM,
         valToState = { valToState(it, xcfa) },
         biValToAction = { val1, val2 -> valToAction(xcfa, val1, val2) },
         logger = logger
-    ) as SafetyChecker<XcfaState<*>, XcfaAction, XcfaPrec<*>>
+    ) as SafetyChecker<XcfaState<PtrState<*>>, XcfaAction, XcfaPrec<*>>
 
 }
 
 fun getAbstractBoundedChecker(xcfa: XCFA, mcm: MCM,
     config: XcfaConfig<*, *>,
-    logger: Logger): SafetyChecker<XcfaState<*>, XcfaAction, XcfaPrec<*>> {
+    logger: Logger): SafetyChecker<XcfaState<PtrState<*>>, XcfaAction, XcfaPrec<PtrPrec<*>>> {
 
     val abstractBoundedConfig = config.backendConfig.specConfig as AbstractBoundedConfig
     val cegarConfig = abstractBoundedConfig.cegarConfig
@@ -118,7 +119,7 @@ fun getAbstractBoundedChecker(xcfa: XCFA, mcm: MCM,
         refiner = SingleExprTraceRefiner.create(ref, precRefiner, logger),
         stateExprHandler = stateExprHandler,
         logger = logger
-    ) as SafetyChecker<XcfaState<PtrState<*>>, XcfaAction, XcfaPrec<*>>
+    ) as SafetyChecker<XcfaState<PtrState<*>>, XcfaAction, XcfaPrec<PtrPrec<*>>>
 
 }
 

@@ -24,6 +24,7 @@ import hu.bme.mit.theta.analysis.expl.ExplState
 import hu.bme.mit.theta.analysis.ptr.PtrState
 import hu.bme.mit.theta.analysis.pred.PredPrec
 import hu.bme.mit.theta.analysis.pred.PredState
+import hu.bme.mit.theta.analysis.ptr.PtrPrec
 import hu.bme.mit.theta.core.decl.Decls.Var
 import hu.bme.mit.theta.core.decl.VarDecl
 import hu.bme.mit.theta.core.model.ImmutableValuation
@@ -68,16 +69,24 @@ fun valToState(valuation: Valuation, xcfa: XCFA): XcfaState<PtrState<ExplState>>
     }
     return XcfaState(
         xcfa = xcfa,
-        processes = mapOf(Pair(0, XcfaProcessState(
-            locs = LinkedList(
-                listOf(map[(valMap[valMap.keys.first { it.name == "__loc_" }] as IntLitExpr).value.toInt()])),
-            varLookup = LinkedList(),
-        ))),
+        processes = mapOf(
+            Pair(
+                0, XcfaProcessState(
+                    locs = LinkedList(
+                        listOf(map[(valMap[valMap.keys.first { it.name == "__loc_" }] as IntLitExpr).value.toInt()])
+                    ),
+                    varLookup = LinkedList(),
+                )
+            )
+        ),
         PtrState(ExplState.of(
             ImmutableValuation.from(
                 valMap
                     .filter { it.key.name != "__loc_" && !it.key.name.startsWith("__temp_") }
-                    .map { Pair(Var("_" + "_" + it.key.name, it.key.type), it.value) }.toMap()))),
+                    .map { Pair(Var("_" + "_" + it.key.name, it.key.type), it.value) }.toMap()
+            )
+        )
+        ),
         mutexes = emptyMap(),
         threadLookup = emptyMap(),
         bottom = false
@@ -88,27 +97,34 @@ private fun locVarEqAnd(locVar: VarDecl<*>, i1: VarIndexing, i2: VarIndexing, ex
     And(Eq(PathUtils.unfold(locVar.ref, i1), PathUtils.unfold(locVar.ref, i2)), expr)
 
 class XcfaExplStateExprHandler(private val xcfa: XCFA, private val locVar: VarDecl<*>? = null) :
-    StateExprHandler<XcfaState<ExplState>, XcfaPrec<ExplPrec>>() {
+    StateExprHandler<XcfaState<PtrState<ExplState>>, XcfaPrec<PtrPrec<ExplPrec>>>() {
 
     private val explStateExprHandler = ExplStateExprHandler()
 
-    override fun valToState(model: Valuation, indexing: VarIndexing, stateValuation: Valuation,
-        prec: XcfaPrec<ExplPrec>): XcfaState<ExplState> =
-        valToState(ImmutableValuation.from(stateValuation.toMap()
-            .filter { (key, _) -> key in (prec.p.vars + locVar) }), xcfa)
+    override fun valToState(
+        model: Valuation, indexing: VarIndexing, stateValuation: Valuation,
+        prec: XcfaPrec<PtrPrec<ExplPrec>>
+    ): XcfaState<PtrState<ExplState>> =
+        valToState(ImmutableValuation.from(stateValuation.toMap().filter { (key, _) ->
+            key in (prec.p.innerPrec.vars + locVar)
+        }), xcfa)
 
-    override fun equivalent(i1: VarIndexing, i2: VarIndexing, prec: XcfaPrec<ExplPrec>,
-        lastPrec: XcfaPrec<ExplPrec>?): Expr<BoolType> =
-        locVarEqAnd(locVar!!, i1, i2, explStateExprHandler.equivalent(i1, i2, prec.p, lastPrec?.p))
+    override fun equivalent(
+        i1: VarIndexing, i2: VarIndexing, prec: XcfaPrec<PtrPrec<ExplPrec>>,
+        lastPrec: XcfaPrec<PtrPrec<ExplPrec>>?
+    ): Expr<BoolType> =
+        locVarEqAnd(locVar!!, i1, i2, explStateExprHandler.equivalent(i1, i2, prec.p.innerPrec, lastPrec?.p?.innerPrec))
 }
 
 class XcfaPredStateExprHandler(private val xcfa: XCFA, private val locVar: VarDecl<*>? = null) :
-    StateExprHandler<XcfaState<PredState>, XcfaPrec<PredPrec>>() {
+    StateExprHandler<XcfaState<PtrState<PredState>>, XcfaPrec<PtrPrec<PredPrec>>>() {
 
     private val predStateExprHandler = PredStateExprHandler()
 
-    override fun valToState(model: Valuation, indexing: VarIndexing, stateValuation: Valuation,
-        prec: XcfaPrec<PredPrec>): XcfaState<PredState> {
+    override fun valToState(
+        model: Valuation, indexing: VarIndexing, stateValuation: Valuation,
+        prec: XcfaPrec<PtrPrec<PredPrec>>
+    ): XcfaState<PtrState<PredState>> {
         val valMap = stateValuation.toMap()
         var i = 0
         val map = mutableMapOf<Int, XcfaLocation>()
@@ -117,23 +133,32 @@ class XcfaPredStateExprHandler(private val xcfa: XCFA, private val locVar: VarDe
         }
         return XcfaState(
             xcfa = xcfa,
-            processes = mapOf(Pair(0, XcfaProcessState(
-                locs = LinkedList(
-                    listOf(map[(valMap[valMap.keys.first { it.name == "__loc_" }] as IntLitExpr).value.toInt()])),
-                varLookup = LinkedList(),
-            ))),
-            sGlobal = predStateExprHandler.valToState(model, indexing, stateValuation, prec.p),
+            processes = mapOf(
+                Pair(
+                    0, XcfaProcessState(
+                        locs = LinkedList(
+                            listOf(map[(valMap[valMap.keys.first { it.name == "__loc_" }] as IntLitExpr).value.toInt()])
+                        ),
+                        varLookup = LinkedList(),
+                    )
+                )
+            ),
+            sGlobal = PtrState(predStateExprHandler.valToState(model, indexing, stateValuation, prec.p.innerPrec)),
             mutexes = emptyMap(),
             threadLookup = emptyMap(),
             bottom = false
         )
     }
 
-    override fun stateToExpr(indexing: VarIndexing, prec: XcfaPrec<PredPrec>,
-        lastPrec: XcfaPrec<PredPrec>?): Expr<BoolType> =
-        predStateExprHandler.stateToExpr(indexing, prec.p, lastPrec?.p)
+    override fun stateToExpr(
+        indexing: VarIndexing, prec: XcfaPrec<PtrPrec<PredPrec>>,
+        lastPrec: XcfaPrec<PtrPrec<PredPrec>>?
+    ): Expr<BoolType> =
+        predStateExprHandler.stateToExpr(indexing, prec.p.innerPrec, lastPrec?.p?.innerPrec)
 
-    override fun equivalent(i1: VarIndexing, i2: VarIndexing, prec: XcfaPrec<PredPrec>,
-        lastPrec: XcfaPrec<PredPrec>?): Expr<BoolType> =
-        locVarEqAnd(locVar!!, i1, i2, predStateExprHandler.equivalent(i1, i2, prec.p, lastPrec?.p))
+    override fun equivalent(
+        i1: VarIndexing, i2: VarIndexing, prec: XcfaPrec<PtrPrec<PredPrec>>,
+        lastPrec: XcfaPrec<PtrPrec<PredPrec>>?
+    ): Expr<BoolType> =
+        locVarEqAnd(locVar!!, i1, i2, predStateExprHandler.equivalent(i1, i2, prec.p.innerPrec, lastPrec?.p?.innerPrec))
 }
