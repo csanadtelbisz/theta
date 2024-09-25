@@ -16,7 +16,7 @@
 
 package hu.bme.mit.theta.xcfa.analysis
 
-import hu.bme.mit.theta.analysis.algorithm.ArgNodeComparators
+import hu.bme.mit.theta.analysis.algorithm.arg.ArgNodeComparators
 import hu.bme.mit.theta.analysis.algorithm.SafetyResult
 import hu.bme.mit.theta.analysis.algorithm.cegar.Abstractor
 import hu.bme.mit.theta.analysis.algorithm.cegar.CegarChecker
@@ -78,7 +78,8 @@ class XcfaPredAnalysisTest {
             xcfa,
             solver,
             PredAbstractors.cartesianAbstractor(solver),
-            getPartialOrder(PredOrd.create(solver).getPtrPartialOrd())
+            getPartialOrder(PredOrd.create(solver).getPtrPartialOrd()),
+            false
         )
 
         val lts = getXcfaLts()
@@ -124,7 +125,7 @@ class XcfaPredAnalysisTest {
             xcfa,
             solver,
             PredAbstractors.cartesianAbstractor(solver),
-            getPartialOrder(PredOrd.create(solver).getPtrPartialOrd())
+            getPartialOrder(PredOrd.create(solver).getPtrPartialOrd()), false
         )
 
         val lts = XcfaSporLts(xcfa)
@@ -171,7 +172,7 @@ class XcfaPredAnalysisTest {
             xcfa,
             solver,
             PredAbstractors.cartesianAbstractor(solver),
-            XcfaDporLts.getPartialOrder(getPartialOrder(PredOrd.create(solver).getPtrPartialOrd()))
+            XcfaDporLts.getPartialOrder(getPartialOrder(PredOrd.create(solver).getPtrPartialOrd())), false
         )
 
         val lts = XcfaDporLts(xcfa)
@@ -217,7 +218,7 @@ class XcfaPredAnalysisTest {
             xcfa,
             solver,
             PredAbstractors.cartesianAbstractor(solver),
-            getPartialOrder(PredOrd.create(solver).getPtrPartialOrd())
+            getPartialOrder(PredOrd.create(solver).getPtrPartialOrd()), false
         )
 
         val lts = XcfaAasporLts(xcfa, mutableMapOf())
@@ -265,7 +266,7 @@ class XcfaPredAnalysisTest {
             xcfa,
             solver,
             PredAbstractors.cartesianAbstractor(solver),
-            XcfaDporLts.getPartialOrder(getPartialOrder(PredOrd.create(solver).getPtrPartialOrd()))
+            XcfaDporLts.getPartialOrder(getPartialOrder(PredOrd.create(solver).getPtrPartialOrd())), false
         )
 
         val lts = XcfaAadporLts(xcfa)

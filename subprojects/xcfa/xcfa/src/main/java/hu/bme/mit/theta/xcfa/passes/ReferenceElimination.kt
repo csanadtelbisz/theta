@@ -42,8 +42,8 @@ class ReferenceElimination(val parseContext: ParseContext) : ProcedurePass {
 
     companion object {
 
-    private var cnt = 2 // counts upwards, uses 3k+2
-        get() = field.also { field += 3 }
+        private var cnt = 2 // counts upwards, uses 3k+2
+            get() = field.also { field += 3 }
     }
 
     override fun run(builder: XcfaProcedureBuilder): XcfaProcedureBuilder {
@@ -81,7 +81,7 @@ class ReferenceElimination(val parseContext: ParseContext) : ProcedurePass {
                     cast(CComplexType.getType(varDecl.ref, parseContext).getValue("$cnt"), varDecl.type)))
                 Pair(varDecl, assign)
             } + globalReferredVars
-        
+
         if (referredVars.isEmpty()) {
             return builder
         }
@@ -135,14 +135,14 @@ class ReferenceElimination(val parseContext: ParseContext) : ProcedurePass {
     fun Stmt.changeReferredVars(varLut: Map<VarDecl<*>, Pair<VarDecl<Type>, StmtLabel>>,
         parseContext: ParseContext? = null): List<Stmt> {
         val stmts = when (this) {
-            is AssignStmt<*> -> if(this.varDecl in varLut.keys) {
+            is AssignStmt<*> -> if (this.varDecl in varLut.keys) {
                 val newVar = varLut[this.varDecl]!!.first
                 listOf(
                     MemoryAssignStmt.create(
                         Dereference(
                             cast(newVar.ref, newVar.type),
-                            cast(CComplexType.getSignedInt(parseContext).nullValue, newVar.type),
-                            CPointer(null, CComplexType.getType(expr, parseContext), parseContext).smtType),
+                            cast(CComplexType.getSignedLong(parseContext).nullValue, newVar.type),
+                            this.expr.type),
                         this.expr.changeReferredVars(varLut, parseContext)))
             } else {
                 listOf(AssignStmt.of(cast(this.varDecl, this.varDecl.type),
@@ -174,11 +174,9 @@ class ReferenceElimination(val parseContext: ParseContext) : ProcedurePass {
         parseContext: ParseContext? = null): Expr<T> =
         if (this is RefExpr<T>) {
             (decl as VarDecl<T>).changeReferredVars(varLut)
-        }
-        else if (this is Reference<*, *> && this.expr is RefExpr<*> && (this.expr as RefExpr<*>).decl in varLut.keys) {
+        } else if (this is Reference<*, *> && this.expr is RefExpr<*> && (this.expr as RefExpr<*>).decl in varLut.keys) {
             varLut[(this.expr as RefExpr<*>).decl]?.first?.ref as Expr<T>
-        }
-        else {
+        } else {
             val ret = this.withOps(this.ops.map { it.changeReferredVars(varLut, parseContext) })
             if (parseContext?.metadata?.getMetadataValue(this, "cType")?.isPresent == true) {
                 parseContext.metadata?.create(ret, "cType", CComplexType.getType(this, parseContext))
@@ -189,8 +187,8 @@ class ReferenceElimination(val parseContext: ParseContext) : ProcedurePass {
     fun <T : Type> VarDecl<T>.changeReferredVars(
         varLut: Map<VarDecl<*>, Pair<VarDecl<Type>, StmtLabel>>): Expr<T> =
         varLut[this]?.first?.let {
-            Dereference(cast(it.ref, it.type), cast(CComplexType.getSignedInt(parseContext).nullValue, this.ref.type),
-                it.type) as Expr<T>
+            Dereference(cast(it.ref, it.type), cast(CComplexType.getSignedInt(parseContext).nullValue, it.type),
+                this.type) as Expr<T>
         } ?: this.ref
 
 }

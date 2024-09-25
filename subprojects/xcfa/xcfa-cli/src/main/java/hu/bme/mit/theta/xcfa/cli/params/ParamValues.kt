@@ -20,9 +20,9 @@ import com.google.gson.reflect.TypeToken
 import hu.bme.mit.theta.analysis.LTS
 import hu.bme.mit.theta.analysis.PartialOrd
 import hu.bme.mit.theta.analysis.Prec
-import hu.bme.mit.theta.analysis.algorithm.ArgNode
-import hu.bme.mit.theta.analysis.algorithm.ArgNodeComparators
-import hu.bme.mit.theta.analysis.algorithm.ArgNodeComparators.ArgNodeComparator
+import hu.bme.mit.theta.analysis.algorithm.arg.ArgNode
+import hu.bme.mit.theta.analysis.algorithm.arg.ArgNodeComparators
+import hu.bme.mit.theta.analysis.algorithm.arg.ArgNodeComparators.ArgNodeComparator
 import hu.bme.mit.theta.analysis.algorithm.cegar.Abstractor
 import hu.bme.mit.theta.analysis.algorithm.cegar.abstractor.StopCriterion
 import hu.bme.mit.theta.analysis.algorithm.cegar.abstractor.StopCriterions
@@ -34,7 +34,10 @@ import hu.bme.mit.theta.analysis.expr.ExprState
 import hu.bme.mit.theta.analysis.expr.refinement.*
 import hu.bme.mit.theta.analysis.pred.*
 import hu.bme.mit.theta.analysis.pred.ExprSplitters.ExprSplitter
-import hu.bme.mit.theta.analysis.ptr.*
+import hu.bme.mit.theta.analysis.ptr.ItpRefToPtrPrec
+import hu.bme.mit.theta.analysis.ptr.PtrPrec
+import hu.bme.mit.theta.analysis.ptr.PtrState
+import hu.bme.mit.theta.analysis.ptr.getPtrPartialOrd
 import hu.bme.mit.theta.analysis.waitlist.Waitlist
 import hu.bme.mit.theta.common.logging.Logger
 import hu.bme.mit.theta.core.decl.VarDecl
@@ -64,6 +67,7 @@ enum class InputType {
 enum class Backend {
     CEGAR,
     BOUNDED,
+    CHC,
     OC,
     LAZY,
     PORTFOLIO,
@@ -102,7 +106,7 @@ enum class Domain(
         lts: LTS<XcfaState<out PtrState<out ExprState>>, XcfaAction>,
         errorDetectionType: ErrorDetection,
         partialOrd: PartialOrd<out XcfaState<out PtrState<out ExprState>>>,
-        ptrTrackingStyle: PtrTracking
+        isHavoc: Boolean
     ) -> Abstractor<out ExprState, out ExprAction, out Prec>,
     val itpPrecRefiner: (exprSplitter: ExprSplitter) -> PrecRefiner<out ExprState, out ExprAction, out Prec, out Refutation>,
     val initPrec: (XCFA, InitPrec) -> XcfaPrec<out PtrPrec<*>>,
@@ -336,13 +340,15 @@ enum class ConeOfInfluenceMode(
         ConeOfInfluence.coreLts = por.getLts(xcfa, ivr).also { COI.porLts = it }
         ConeOfInfluence.lts
     }),
-    POR_COI({ xcfa, ivr, _ ->
+    POR_COI({ xcfa, ivr, por ->
         ConeOfInfluence.coreLts = getXcfaLts()
-        XcfaAasporCoiLts(xcfa, ivr, ConeOfInfluence.lts)
+        if (por.isAbstractionAware) XcfaAasporCoiLts(xcfa, ivr, ConeOfInfluence.lts)
+        else XcfaSporCoiLts(xcfa, ConeOfInfluence.lts)
     }),
     POR_COI_POR({ xcfa, ivr, por ->
         ConeOfInfluence.coreLts = por.getLts(xcfa, ivr).also { POR_COI_POR.porLts = it }
-        XcfaAasporCoiLts(xcfa, ivr, ConeOfInfluence.lts)
+        if (por.isAbstractionAware) XcfaAasporCoiLts(xcfa, ivr, ConeOfInfluence.lts)
+        else XcfaSporCoiLts(xcfa, ConeOfInfluence.lts)
     })
     ;
 
