@@ -17,10 +17,12 @@
 package hu.bme.mit.theta.xcfa.passes
 
 import hu.bme.mit.theta.core.decl.VarDecl
+import hu.bme.mit.theta.core.stmt.AssignStmt
 import hu.bme.mit.theta.core.type.Type
 import hu.bme.mit.theta.core.type.anytype.RefExpr
 import hu.bme.mit.theta.core.type.anytype.Reference
 import hu.bme.mit.theta.core.type.inttype.IntExprs.Int
+import hu.bme.mit.theta.core.utils.TypeUtils.cast
 import hu.bme.mit.theta.xcfa.model.*
 
 /**
@@ -39,7 +41,8 @@ class CLibraryFunctionsPass : ProcedurePass {
         "pthread_cond_signal",
         "pthread_mutex_init",
         "pthread_cond_init",
-        "pthread_exit"
+        "pthread_exit",
+        "pthread_key_create"
     )
 
     override fun run(builder: XcfaProcedureBuilder): XcfaProcedureBuilder {
@@ -127,6 +130,23 @@ class CLibraryFunctionsPass : ProcedurePass {
                             "pthread_exit" -> {
                                 target = builder.finalLoc.get()
                                 listOf(FenceLabel(setOf("pthread_exit"), metadata))
+                            }
+
+                            "pthread_key_create" -> {
+                                var ret = invokeLabel.params[0]
+                                while (ret is Reference<*, *>) ret = ret.expr
+                                check(ret is RefExpr && (ret as RefExpr<out Type>).decl is VarDecl)
+
+                                var key = invokeLabel.params[1]
+                                while (key is Reference<*, *>) key = key.expr
+                                check(key is RefExpr && (key as RefExpr<out Type>).decl is VarDecl)
+
+                                listOf(
+                                    FenceLabel(setOf("pthread_key_create"), metadata, key.decl as VarDecl<out Type>),
+                                    StmtLabel(
+                                        AssignStmt.of(cast(ret.decl as VarDecl<*>, Int()), Int(0)), metadata = metadata
+                                    )
+                                )
                             }
 
                             else -> error("Unsupported library function ${invokeLabel.name}")

@@ -23,10 +23,14 @@ import hu.bme.mit.theta.core.stmt.Stmts.Assign
 import hu.bme.mit.theta.core.type.Expr
 import hu.bme.mit.theta.core.type.anytype.RefExpr
 import hu.bme.mit.theta.core.type.booltype.BoolType
+import hu.bme.mit.theta.core.type.inttype.IntExprs.Int
+import hu.bme.mit.theta.core.type.inttype.IntLitExpr
+import hu.bme.mit.theta.core.type.inttype.IntType
 import hu.bme.mit.theta.core.utils.TypeUtils.cast
 import hu.bme.mit.theta.xcfa.getFlatLabels
 import hu.bme.mit.theta.xcfa.model.*
 import hu.bme.mit.theta.xcfa.passes.changeVars
+import java.math.BigInteger
 import java.util.*
 
 private var pidCnt = 1
@@ -64,9 +68,10 @@ data class XcfaState<S : ExprState> @JvmOverloads constructor(
             changes.add { state -> state.withProcesses(newProcesses) }
         }
 
-        val newLabels = a.edge.getFlatLabels().filter {
-            when (it) {
-                is FenceLabel -> it.labels.forEach { label ->
+        val newLabels: List<XcfaLabel> = a.edge.getFlatLabels().mapNotNull { l ->
+            when (l) {
+                is FenceLabel -> l.labels.mapNotNull { label ->
+                    var newLabel: XcfaLabel? = null
                     when (label) {
                         "ATOMIC_BEGIN" -> changes.add { it.enterMutex("", a.pid) }
                         "ATOMIC_END" -> changes.add { it.exitMutex("", a.pid) }
@@ -99,39 +104,46 @@ data class XcfaState<S : ExprState> @JvmOverloads constructor(
                             if (processState.locs.size > 1) error("pthread_exit not allowed in invoked function")
                         }
 
+                        "pthread_key_create" -> {
+                            newLabel = StmtLabel(Assign(cast(l.varDecl, Int()), Int(BigInteger.valueOf(a.pid.toLong()))))
+                        }
+
                         else -> error("Unknown fence label $label")
                     }
-                }.let { false }
+                    newLabel
+                }.let {
+                    if(it.isEmpty()) null else SequenceLabel(it)
+                }
 
                 is InvokeLabel -> {
-                    val proc = xcfa?.procedures?.find { proc -> proc.name == it.name } ?: error(
-                        "No such method ${it.name}.")
+                    val proc = xcfa?.procedures?.find { proc -> proc.name == l.name } ?: error(
+                        "No such method ${l.name}.")
                     val returnStmt = SequenceLabel(
                         proc.params.withIndex().filter { it.value.second != ParamDirection.IN }.map { iVal ->
-                            StmtLabel(Assign(cast((it.params[iVal.index] as RefExpr<*>).decl as VarDecl<*>,
+                            StmtLabel(Assign(cast((l.params[iVal.index] as RefExpr<*>).decl as VarDecl<*>,
                                 iVal.value.first.type), cast(iVal.value.first.ref, iVal.value.first.type)),
-                                metadata = it.metadata)
+                                metadata = l.metadata)
                         })
                     changes.add { state ->
-                        state.invokeFunction(a.pid, proc, returnStmt, proc.params.toMap(), it.tempLookup)
+                        state.invokeFunction(a.pid, proc, returnStmt, proc.params.toMap(), l.tempLookup)
                     }
-                    false
+                    null
                 }
 
-                is ReturnLabel -> changes.add { state -> state.returnFromFunction(a.pid) }.let { true }
+                is ReturnLabel -> changes.add { state -> state.returnFromFunction(a.pid) }.let { l }
 
                 is JoinLabel -> {
-                    changes.add { state -> state.enterMutex("${threadLookup[it.pidVar]}", a.pid) }
-                    changes.add { state -> state.exitMutex("${threadLookup[it.pidVar]}", a.pid) }
-                    false
+                    changes.add { state -> state.enterMutex("${threadLookup[l.pidVar]}", a.pid) }
+                    changes.add { state -> state.exitMutex("${threadLookup[l.pidVar]}", a.pid) }
+                    null
                 }
 
-                is NondetLabel -> true
-                NopLabel -> false
+                is NondetLabel -> l
+                NopLabel -> null
                 is ReadLabel -> error("Read/Write labels not yet supported")
-                is SequenceLabel -> true
-                is StartLabel -> changes.add { state -> state.start(it) }.let { true }
-                is StmtLabel -> true
+                is SequenceLabel -> l
+                is StartLabel -> changes.add { state -> state.start(l) }.let { l }
+                is StmtLabel -> l
                 is WriteLabel -> error("Read/Write labels not yet supported")
             }
         }

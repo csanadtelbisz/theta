@@ -183,8 +183,11 @@ data class WriteLabel constructor(
 
 data class FenceLabel(
     val labels: Set<String>,
-    override val metadata: MetaData = EmptyMetaData
+    override val metadata: MetaData = EmptyMetaData,
+    val varDecl: VarDecl<*>? = null
 ) : XcfaLabel(metadata = metadata) {
+
+    constructor(labels: Set<String>, metadata: MetaData) : this(labels, metadata, null)
 
     override fun toString(): String {
         return "F[${labels.joinToString(";")}]"
