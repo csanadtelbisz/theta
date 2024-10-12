@@ -23,7 +23,7 @@ import hu.bme.mit.theta.solver.SolverManager
 import hu.bme.mit.theta.solver.SolverStatus
 import java.util.*
 
-class BasicOcChecker<E : Event> : OcCheckerBase<E>() {
+class BasicOcChecker<E : Event> : OcCheckerBase<E, OcAssignment<E>>() {
 
     override val solver: Solver = SolverManager.resolveSolverFactory("Z3:4.13").createSolver()
     private var relations: Array<Array<Reason?>>? = null
@@ -37,26 +37,25 @@ class BasicOcChecker<E : Event> : OcCheckerBase<E>() {
         val flatEvents = events.values.flatMap { it.values.flatten() }
         val initialRels = Array(flatEvents.size) { Array<Reason?>(flatEvents.size) { null } }
         pos.forEach { setAndClose(initialRels, it) }
-        val decisionStack = Stack<OcAssignment<E>>()
-        decisionStack.push(OcAssignment(initialRels)) // not really a decision point (initial)
+        partialAssignment.push(OcAssignment(initialRels)) // not really a decision point (initial)
 
         dpllLoop@
         while (solver.check().isSat) { // DPLL loop
             val valuation = solver.model.toMap()
             val changedRfs = modifiableRels.filter { rel ->
                 val value = rel.enabled(valuation)
-                decisionStack.popUntil({ it.relation == rel }, value) && value == true
+                partialAssignment.popUntil({ it.relation == rel }, value) && value == true
             }
             val changedEnabledEvents = flatEvents.filter { ev ->
                 val enabled = ev.enabled(solver.model)
                 if (ev.type != EventType.WRITE || !rfs.containsKey(ev.const.varDecl)) return@filter false
-                decisionStack.popUntil({ it.event == ev }, enabled) && enabled == true
+                partialAssignment.popUntil({ it.event == ev }, enabled) && enabled == true
             }
 
             // propagate
             for (rf in changedRfs) {
-                val decision = OcAssignment(decisionStack.peek().rels, rf)
-                decisionStack.push(decision)
+                val decision = OcAssignment(partialAssignment.peek().rels, rf)
+                partialAssignment.push(decision)
                 val reason0 = setAndClose(decision.rels, rf)
                 if (propagate(reason0)) continue@dpllLoop
 
@@ -69,19 +68,19 @@ class BasicOcChecker<E : Event> : OcCheckerBase<E>() {
             }
 
             for (w in changedEnabledEvents) {
-                val decision = OcAssignment(decisionStack.peek().rels, w)
-                decisionStack.push(decision)
+                val decision = OcAssignment(partialAssignment.peek().rels, w)
+                partialAssignment.push(decision)
                 for (rf in rfs[w.const.varDecl]!!.filter { it.enabled == true }) {
                     val reason = derive(decision.rels, rf, w)
                     if (propagate(reason)) continue@dpllLoop
                 }
             }
 
-            relations = decisionStack.peek().rels
+            relations = partialAssignment.peek().rels
             return solver.status // no conflict found, counterexample is valid
         }
 
-        relations = decisionStack.peek().rels
+        relations = partialAssignment.peek().rels
         return solver.status
     }
 

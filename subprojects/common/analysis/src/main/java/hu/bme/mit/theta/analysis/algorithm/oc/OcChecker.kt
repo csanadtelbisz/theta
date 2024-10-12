@@ -20,6 +20,7 @@ package hu.bme.mit.theta.analysis.algorithm.oc
 import hu.bme.mit.theta.core.decl.VarDecl
 import hu.bme.mit.theta.solver.Solver
 import hu.bme.mit.theta.solver.SolverStatus
+import java.util.*
 
 internal inline fun <reified T> Array<Array<T?>>.copy(): Array<Array<T?>> =
     Array(size) { i -> Array(size) { j -> this[i][j] } }
@@ -66,9 +67,10 @@ interface OcChecker<E : Event> {
  * This interface implements basic utilities for an ordering consistency checker such as derivation rules and
  * transitive closure operations.
  */
-abstract class OcCheckerBase<E : Event> : OcChecker<E> {
+abstract class OcCheckerBase<E : Event, A : OcAssignment<E>> : OcChecker<E> {
 
     protected val propagated: MutableList<Reason> = mutableListOf()
+    protected val partialAssignment = Stack<A>()
 
     override fun getPropagatedClauses() = propagated.toList()
 
@@ -81,12 +83,12 @@ abstract class OcCheckerBase<E : Event> : OcChecker<E> {
 
         rels[w.clkId][rf.to.clkId] != null -> { // WS derivation
             val reason = WriteSerializationReason(rf, w, rels[w.clkId][rf.to.clkId]!!)
-            setAndClose(rels, w.clkId, rf.from.clkId, reason)
+            setAndClose(rels, w, rf.from, reason)
         }
 
         rels[rf.from.clkId][w.clkId] != null -> { // FR derivation
             val reason = FromReadReason(rf, w, rels[rf.from.clkId][w.clkId]!!)
-            setAndClose(rels, rf.to.clkId, w.clkId, reason)
+            setAndClose(rels, rf.to, w, reason)
         }
 
         else -> null
@@ -95,14 +97,47 @@ abstract class OcCheckerBase<E : Event> : OcChecker<E> {
     protected fun setAndClose(rels: Array<Array<Reason?>>, rel: Relation<E>): Reason? {
         if (rel.from.clkId == rel.to.clkId) return null // within an atomic block
         return setAndClose(
-            rels, rel.from.clkId, rel.to.clkId,
+            rels, rel.from, rel.to,
             if (rel.type == RelationType.PO) PoReason else RelationReason(rel)
         )
     }
 
-    private fun setAndClose(rels: Array<Array<Reason?>>, from: Int, to: Int, reason: Reason): Reason? {
-        if (from == to) return reason // cycle (self-loop) found
+    private fun setAndClose(rels: Array<Array<Reason?>>, from: E, to: E, reason: Reason): Reason? {
+        val (conflict, newClosed) = setAndClose(rels, from.clkId, to.clkId, reason)
+        if(!newClosed) return conflict
+        return conflict ?: let {
+            if (from.sameMemory(to)) {
+                if (from.type == EventType.WRITE && to.type == EventType.READ) {
+                    partialAssignment.forEach { assignment ->
+                        assignment.relation?.let { rf ->
+                            if (rf.to == to) {
+                                derive(rels, rf, from)?.let { return it }
+                            }
+                        }
+                    }
+                } else if (from.type == EventType.WRITE && to.type == EventType.WRITE) {
+                    partialAssignment.forEach { assignment ->
+                        assignment.relation?.let { rf ->
+                            if (rf.from == from) {
+                                derive(rels, rf, to)?.let { return it }
+                            }
+                        }
+                    }
+                }
+            }
+            null
+        }
+    }
+
+    /**
+     * Sets the relation from->to and closes the transitive closure of the relation graph.
+     * @return the reason of the inconsistency if a cycle is found, otherwise null as well as a boolean indicating if
+     *         any new relation was added
+     */
+    private fun setAndClose(rels: Array<Array<Reason?>>, from: Int, to: Int, reason: Reason): Pair<Reason?, Boolean> {
+        if (from == to) return reason to false // cycle (self-loop) found
         val toClose = mutableListOf(from to to to reason)
+        var newClosed = false
         while (toClose.isNotEmpty()) {
             val (fromTo, r) = toClose.removeFirst()
             val (i1, i2) = fromTo
@@ -110,22 +145,23 @@ abstract class OcCheckerBase<E : Event> : OcChecker<E> {
             if (rels[i1][i2] != null) continue
 
             rels[i1][i2] = r
+            newClosed = true
             rels[i2].forEachIndexed { i2next, b ->
                 if (b != null && rels[i1][i2next] == null) { // i2 -> i2next, not i1 -> i2next
                     val combinedReason = r and b
-                    if (i1 == i2next) return combinedReason // cycle (self-loop) found
+                    if (i1 == i2next) return combinedReason to true // cycle (self-loop) found
                     toClose.add(i1 to i2next to combinedReason)
                 }
             }
             rels.forEachIndexed { i1previous, b ->
                 if (b[i1] != null && rels[i1previous][i2] == null) { // i1previous -> i1, not i1previous -> i2
                     val combinedReason = r and b[i1]!!
-                    if (i1previous == i2) return combinedReason // cycle (self-loop) found
+                    if (i1previous == i2) return combinedReason to true // cycle (self-loop) found
                     toClose.add(i1previous to i2 to combinedReason)
                 }
             }
         }
-        return null
+        return null to newClosed
     }
 }
 

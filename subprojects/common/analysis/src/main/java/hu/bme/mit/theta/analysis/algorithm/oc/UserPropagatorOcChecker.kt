@@ -26,14 +26,13 @@ import hu.bme.mit.theta.solver.javasmt.JavaSMTUserPropagator
 import org.sosy_lab.java_smt.SolverContextFactory.Solvers.Z3
 import java.util.*
 
-open class UserPropagatorOcChecker<E : Event> : OcCheckerBase<E>() {
+open class UserPropagatorOcChecker<E : Event> : OcCheckerBase<E, PropagatorOcAssignment<E>>() {
 
     protected lateinit var writes: Map<VarDecl<*>, List<E>>
     protected lateinit var rfs: Map<VarDecl<*>, Set<Relation<E>>>
     private lateinit var flatWrites: List<E>
     private lateinit var flatRfs: List<Relation<E>>
     private lateinit var interferenceCondToEvents: Map<Expr<BoolType>, List<Pair<E, E>>>
-    protected val partialAssignment = Stack<PropagatorOcAssignment<E>>()
 
     protected val userPropagator: JavaSMTUserPropagator = object : JavaSMTUserPropagator() {
         override fun onKnownValue(expr: Expr<BoolType>, value: Boolean) {
@@ -50,32 +49,6 @@ open class UserPropagatorOcChecker<E : Event> : OcCheckerBase<E>() {
         }
 
         override fun onPop(levels: Int) = pop(levels)
-    }
-
-    protected class PropagatorOcAssignment<E : Event> private constructor(
-        stack: Stack<PropagatorOcAssignment<E>>,
-        val solverLevel: Int,
-        rels: Array<Array<Reason?>> = stack.peek().rels.copy(),
-        relation: Relation<E>? = null,
-        event: E? = null,
-        val interference: Pair<E, E>? = null,
-    ) : OcAssignment<E>(rels, relation, event) {
-
-        init {
-            stack.push(this)
-        }
-
-        constructor(stack: Stack<PropagatorOcAssignment<E>>, rels: Array<Array<Reason?>>)
-            : this(stack, 0, rels)
-
-        constructor(stack: Stack<PropagatorOcAssignment<E>>, e: E, solverLevel: Int)
-            : this(stack, solverLevel, event = e)
-
-        constructor(stack: Stack<PropagatorOcAssignment<E>>, r: Relation<E>, solverLevel: Int)
-            : this(stack, solverLevel, relation = r)
-
-        constructor(stack: Stack<PropagatorOcAssignment<E>>, i: Pair<E, E>, solverLevel: Int)
-            : this(stack, solverLevel, interference = i)
     }
 
     override val solver: Solver = JavaSMTSolverFactory.create(Z3, arrayOf()).createSolverWithPropagators(userPropagator)
@@ -180,4 +153,30 @@ open class UserPropagatorOcChecker<E : Event> : OcCheckerBase<E>() {
             partialAssignment.pop()
         }
     }
+}
+
+class PropagatorOcAssignment<E : Event> private constructor(
+    stack: Stack<PropagatorOcAssignment<E>>,
+    val solverLevel: Int,
+    rels: Array<Array<Reason?>> = stack.peek().rels.copy(),
+    relation: Relation<E>? = null,
+    event: E? = null,
+    val interference: Pair<E, E>? = null,
+) : OcAssignment<E>(rels, relation, event) {
+
+    init {
+        stack.push(this)
+    }
+
+    constructor(stack: Stack<PropagatorOcAssignment<E>>, rels: Array<Array<Reason?>>)
+        : this(stack, 0, rels)
+
+    constructor(stack: Stack<PropagatorOcAssignment<E>>, e: E, solverLevel: Int)
+        : this(stack, solverLevel, event = e)
+
+    constructor(stack: Stack<PropagatorOcAssignment<E>>, r: Relation<E>, solverLevel: Int)
+        : this(stack, solverLevel, relation = r)
+
+    constructor(stack: Stack<PropagatorOcAssignment<E>>, i: Pair<E, E>, solverLevel: Int)
+        : this(stack, solverLevel, interference = i)
 }
