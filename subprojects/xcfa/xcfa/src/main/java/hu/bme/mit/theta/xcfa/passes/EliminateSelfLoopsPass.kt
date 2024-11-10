@@ -18,7 +18,7 @@ package hu.bme.mit.theta.xcfa.passes
 import hu.bme.mit.theta.xcfa.model.*
 import java.util.stream.Collectors
 
-class EliminateSelfLoops : ProcedurePass {
+class EliminateSelfLoopsPass : ProcedurePass {
 
   override fun run(builder: XcfaProcedureBuilder): XcfaProcedureBuilder {
     val selfLoops: Set<XcfaEdge> =

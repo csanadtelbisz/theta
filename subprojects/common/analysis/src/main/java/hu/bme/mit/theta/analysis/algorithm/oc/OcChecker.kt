@@ -82,9 +82,13 @@ abstract class OcCheckerBase<E : Event> : OcChecker<E> {
     when {
       !rf.from.sameMemory(w) -> null // different referenced memory locations
       rf.from.clkId == rf.to.clkId -> null // rf within an atomic block
-      w.clkId == rf.from.clkId || w.clkId == rf.to.clkId ->
-        null // w within an atomic block with one of the rf ends
 
+      // w within an atomic block with one of the rf ends
+      w.clkId == rf.to.clkId && w.atomicPo(rf.to) -> RelationReason(rf) // w between rf ends
+      w.clkId == rf.from.clkId && rf.from.atomicPo(w) -> RelationReason(rf) // w between rf ends
+      w.clkId == rf.to.clkId || w.clkId == rf.from.clkId -> null // w not between rf ends
+
+      // different atomic blocks
       rels[w.clkId][rf.to.clkId] != null -> { // WS derivation
         val reason = WriteSerializationReason(rf, w, rels[w.clkId][rf.to.clkId]!!)
         setAndClose(rels, w.clkId, rf.from.clkId, reason)

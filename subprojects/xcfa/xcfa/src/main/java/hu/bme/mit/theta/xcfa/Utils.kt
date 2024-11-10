@@ -201,6 +201,10 @@ inline val XcfaEdge.acquiredEmbeddedFenceVars: Set<String>
 /** Returns the list of accessed variables by the edge associated with an AccessType object. */
 fun XcfaEdge.collectVarsWithAccessType(): VarAccessMap = label.collectVarsWithAccessType()
 
+/** Returns the list of accessed variables by the edge associated with an AccessType object. */
+fun XcfaEdge.collectGlobalVars(globalVars: Collection<VarDecl<*>>): VarAccessMap =
+  label.collectGlobalVars(globalVars)
+
 /**
  * Returns the list of accessed variables by the label. The variable is associated with an
  * AccessType object based on whether the variable is read/written by the label.
@@ -245,7 +249,7 @@ fun XcfaLabel.collectVarsWithAccessType(): VarAccessMap =
 /**
  * Returns the global variables accessed by the label (the variables present in the given argument).
  */
-private fun XcfaLabel.collectGlobalVars(globalVars: Set<VarDecl<*>>): VarAccessMap =
+fun XcfaLabel.collectGlobalVars(globalVars: Collection<VarDecl<*>>): VarAccessMap =
   collectVarsWithAccessType().filter { labelVar -> globalVars.any { it == labelVar.key } }
 
 /**

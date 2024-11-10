@@ -68,6 +68,8 @@ abstract class Event(
 
   open fun interferenceCond(other: Event): Expr<BoolType>? = null
 
+  abstract fun atomicPo(other: Event): Boolean
+
   protected inline fun <T> tryOrNull(block: () -> T?): T? =
     try {
       block()

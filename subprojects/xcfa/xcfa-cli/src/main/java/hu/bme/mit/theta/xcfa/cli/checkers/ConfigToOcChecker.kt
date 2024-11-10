@@ -36,6 +36,7 @@ fun getOcChecker(
   val ocChecker =
     XcfaOcChecker(
       xcfa,
+      config.inputConfig.property,
       ocConfig.decisionProcedure,
       logger,
       ocConfig.inputConflictClauseFile,

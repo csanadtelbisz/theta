@@ -42,7 +42,7 @@ internal fun findAutoConflicts(
 
   fun findSimplePath(from: E, to: E): Reason? {
     if (from.clkId == to.clkId) {
-      if (from.id < to.id) return PoReason
+      if (from.atomicPo(to)) return PoReason
       return null
     }
     if (po(from, to)) return PoReason

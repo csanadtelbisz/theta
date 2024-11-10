@@ -32,7 +32,7 @@ import java.util.*
  * contexts. Requires the ProcedureBuilder to be `deterministic` and `seqLbe` (@see
  * DeterministicPass, @see LbePass)
  */
-class HavocPromotionAndRange(val parseContext: ParseContext) : ProcedurePass {
+class HavocPromotionAndRangePass(val parseContext: ParseContext) : ProcedurePass {
 
   override fun run(builder: XcfaProcedureBuilder): XcfaProcedureBuilder {
     checkNotNull(builder.metaData["deterministic"])

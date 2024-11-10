@@ -30,13 +30,13 @@ import hu.bme.mit.theta.xcfa.model.*
 import java.util.*
 
 /** XcfaEdge must be in a `deterministic` ProcedureBuilder */
-fun XcfaEdge.splitIf(function: (XcfaLabel) -> Boolean): List<XcfaEdge> {
+fun XcfaEdge.splitIf(predicate: (XcfaLabel) -> Boolean): List<XcfaEdge> {
   check(label is SequenceLabel)
-  val newLabels = ArrayList<SequenceLabel>()
-  var current = ArrayList<XcfaLabel>()
-  for (label in label.labels) {
-    if (function(label)) {
-      if (current.size > 0) {
+  val newLabels = mutableListOf<SequenceLabel>()
+  var current = mutableListOf<XcfaLabel>()
+  for (label in label.getFlatLabels()) {
+    if (predicate(label)) {
+      if (current.isNotEmpty()) {
         newLabels.add(SequenceLabel(current))
         current = ArrayList()
       }
@@ -45,11 +45,11 @@ fun XcfaEdge.splitIf(function: (XcfaLabel) -> Boolean): List<XcfaEdge> {
       current.add(label)
     }
   }
-  if (current.size > 0) newLabels.add(SequenceLabel(current))
+  if (current.isNotEmpty()) newLabels.add(SequenceLabel(current))
 
   val locations = ArrayList<XcfaLocation>()
   locations.add(source)
-  for (i in 2..(newLabels.size)) {
+  for (i in 2..newLabels.size) {
     locations.add(XcfaLocation("loc" + XcfaLocation.uniqueCounter(), metadata = EmptyMetaData))
   }
   locations.add(target)

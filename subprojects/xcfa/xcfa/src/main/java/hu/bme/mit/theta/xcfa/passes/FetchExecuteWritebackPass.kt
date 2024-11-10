@@ -36,7 +36,7 @@ import hu.bme.mit.theta.xcfa.model.*
  * Transforms derefs into variables if possible (in the entire XCFA, no derefs remain non-literal)
  * Requires the ProcedureBuilder be `deterministic`.
  */
-class FetchExecuteWriteback(val parseContext: ParseContext) : ProcedurePass {
+class FetchExecuteWritebackPass(val parseContext: ParseContext) : ProcedurePass {
 
   companion object {
 

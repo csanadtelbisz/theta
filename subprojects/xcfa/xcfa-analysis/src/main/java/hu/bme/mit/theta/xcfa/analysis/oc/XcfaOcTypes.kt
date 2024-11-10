@@ -27,6 +27,8 @@ import hu.bme.mit.theta.core.type.booltype.BoolExprs
 import hu.bme.mit.theta.core.type.booltype.BoolExprs.And
 import hu.bme.mit.theta.core.type.booltype.BoolExprs.Or
 import hu.bme.mit.theta.core.type.booltype.BoolType
+import hu.bme.mit.theta.xcfa.getFlatLabels
+import hu.bme.mit.theta.xcfa.isAtomicEnd
 import hu.bme.mit.theta.xcfa.model.XcfaEdge
 import hu.bme.mit.theta.xcfa.model.XcfaLocation
 import hu.bme.mit.theta.xcfa.model.XcfaProcedure
@@ -70,7 +72,7 @@ internal class XcfaEvent(
   clkId: Int = uniqueClkId(),
   val array: Expr<*>? = null,
   val offset: Expr<*>? = null,
-  val id: Int = uniqueId(),
+  private val id: Int = uniqueId(),
 ) : Event(const, type, guard, pid, clkId) {
 
   private var arrayStatic: LitExpr<*>? = null
@@ -150,6 +152,25 @@ internal class XcfaEvent(
     }
 
     return listOfNotNull(arrayEq, offsetEq).toAnd()
+  }
+
+  override fun atomicPo(other: Event): Boolean {
+    other as XcfaEvent
+    check(clkId == other.clkId)
+    if (edge == other.edge) return id < other.id
+    val waitlist = mutableSetOf(edge)
+    val visited = mutableSetOf<XcfaEdge>()
+    while (waitlist.isNotEmpty()) {
+      val current = waitlist.first()
+      waitlist.remove(current)
+      if (!visited.add(current)) continue
+      if (current.getFlatLabels().any { it.isAtomicEnd }) continue
+      current.target.outgoingEdges.forEach {
+        if (it == other.edge) return true
+        waitlist.add(it)
+      }
+    }
+    return false
   }
 }
 

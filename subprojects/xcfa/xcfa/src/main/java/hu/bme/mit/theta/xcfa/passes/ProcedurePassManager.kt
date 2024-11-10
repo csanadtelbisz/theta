@@ -39,7 +39,7 @@ class CPasses(checkOverflow: Boolean, parseContext: ParseContext, uniqueWarningL
       FpFunctionsToExprsPass(parseContext),
       CLibraryFunctionsPass(),
     ),
-    listOf(ReferenceElimination(parseContext), MallocFunctionPass(parseContext)),
+    listOf(ReferenceEliminationPass(parseContext), MallocFunctionPass(parseContext)),
     listOf(
       // optimizing
       SimplifyExprsPass(parseContext),
@@ -51,8 +51,8 @@ class CPasses(checkOverflow: Boolean, parseContext: ParseContext, uniqueWarningL
     listOf(
       // trying to inline procedures
       InlineProceduresPass(parseContext),
-      RemoveDeadEnds(),
-      EliminateSelfLoops(),
+      RemoveDeadEndsPass(),
+      EliminateSelfLoopsPass(),
     ),
     listOf(StaticCoiPass()),
     listOf(
@@ -62,13 +62,13 @@ class CPasses(checkOverflow: Boolean, parseContext: ParseContext, uniqueWarningL
       LbePass(parseContext),
       NormalizePass(), // needed after lbe, TODO
       DeterministicPass(), // needed after lbe, TODO
-      HavocPromotionAndRange(parseContext),
+      HavocPromotionAndRangePass(parseContext),
       // Final cleanup
       UnusedVarPass(uniqueWarningLogger),
       EmptyEdgeRemovalPass(),
       UnusedLocRemovalPass(),
     ),
-    listOf(FetchExecuteWriteback(parseContext)),
+    listOf(FetchExecuteWritebackPass(parseContext)),
   )
 
 class ChcPasses(parseContext: ParseContext, uniqueWarningLogger: Logger) :
@@ -86,8 +86,8 @@ class ChcPasses(parseContext: ParseContext, uniqueWarningLogger: Logger) :
     listOf(
       // trying to inline procedures
       InlineProceduresPass(parseContext),
-      RemoveDeadEnds(),
-      EliminateSelfLoops(),
+      RemoveDeadEndsPass(),
+      EliminateSelfLoopsPass(),
       // handling remaining function calls
       LbePass(parseContext),
       NormalizePass(), // needed after lbe, TODO

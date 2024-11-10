@@ -48,10 +48,12 @@ import hu.bme.mit.theta.core.utils.indexings.VarIndexingFactory
 import hu.bme.mit.theta.solver.Solver
 import hu.bme.mit.theta.solver.SolverStatus
 import hu.bme.mit.theta.xcfa.*
+import hu.bme.mit.theta.xcfa.analysis.ErrorDetection
 import hu.bme.mit.theta.xcfa.analysis.XcfaPrec
 import hu.bme.mit.theta.xcfa.model.*
 import hu.bme.mit.theta.xcfa.passes.AssumeFalseRemovalPass
 import hu.bme.mit.theta.xcfa.passes.AtomicReadsOneWritePass
+import hu.bme.mit.theta.xcfa.passes.DataRaceToAssertionsPass
 import hu.bme.mit.theta.xcfa.passes.MutexToVarPass
 import kotlin.time.measureTime
 
@@ -60,6 +62,7 @@ private val Expr<*>.vars
 
 class XcfaOcChecker(
   xcfa: XCFA,
+  property: ErrorDetection,
   decisionProcedure: OcDecisionProcedureType,
   private val logger: Logger,
   conflictInput: String?,
@@ -70,7 +73,14 @@ class XcfaOcChecker(
 
   private val xcfa: XCFA =
     xcfa.optimizeFurther(
-      listOf(AssumeFalseRemovalPass(), MutexToVarPass(), AtomicReadsOneWritePass())
+      listOf(AssumeFalseRemovalPass(), MutexToVarPass(), AtomicReadsOneWritePass()) +
+        property.let {
+          when (it) {
+            ErrorDetection.ERROR_LOCATION -> listOf()
+            ErrorDetection.DATA_RACE -> listOf(DataRaceToAssertionsPass())
+            else -> exit("unsupported property ($it)")
+          }
+        }
     )
   private var indexing = VarIndexingFactory.indexing(0)
   private val localVars = mutableMapOf<VarDecl<*>, MutableMap<Int, VarDecl<*>>>()
@@ -544,5 +554,12 @@ class XcfaOcChecker(
 
   private fun exit(msg: String): Nothing {
     error("Feature not supported by OC checker: $msg.")
+  }
+
+  fun printXcfa() = xcfa.toDot { edge ->
+    "(${
+      events.values.flatMap { it.flatMap { it.value } }.filter { it.edge == edge }
+        .joinToString(",") { it.const.name }
+    })"
   }
 }

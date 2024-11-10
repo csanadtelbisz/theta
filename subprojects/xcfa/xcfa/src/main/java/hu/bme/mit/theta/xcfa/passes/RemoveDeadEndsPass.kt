@@ -19,7 +19,7 @@ import hu.bme.mit.theta.xcfa.getFlatLabels
 import hu.bme.mit.theta.xcfa.model.*
 import java.util.stream.Collectors
 
-class RemoveDeadEnds : ProcedurePass {
+class RemoveDeadEndsPass : ProcedurePass {
 
     // TODO: thread start and procedure call should not be dead-end! Use-case: while(1) pthread_create(..);
     override fun run(builder: XcfaProcedureBuilder): XcfaProcedureBuilder {

@@ -36,7 +36,7 @@ import hu.bme.mit.theta.xcfa.model.*
 import hu.bme.mit.theta.xcfa.references
 
 /** Removes all references in favor of creating arrays instead. */
-class ReferenceElimination(val parseContext: ParseContext) : ProcedurePass {
+class ReferenceEliminationPass(val parseContext: ParseContext) : ProcedurePass {
 
   companion object {
 

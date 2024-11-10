@@ -88,7 +88,7 @@ class PassTests {
             listOf(
               NormalizePass(),
               DeterministicPass(),
-              EliminateSelfLoops(),
+              EliminateSelfLoopsPass(),
               LbePass(parseContext).also { LbePass.level = LbePass.LbeLevel.LBE_SEQ },
             ),
           input = {
@@ -108,7 +108,7 @@ class PassTests {
             listOf(
               NormalizePass(),
               DeterministicPass(),
-              EliminateSelfLoops(),
+              EliminateSelfLoopsPass(),
               LbePass(parseContext).also { LbePass.level = LbePass.LbeLevel.LBE_FULL },
             ),
           input = {
@@ -249,7 +249,7 @@ class PassTests {
             "y" type Int() init "0"
           },
           passes =
-            listOf(NormalizePass(), DeterministicPass(), HavocPromotionAndRange(parseContext)),
+            listOf(NormalizePass(), DeterministicPass(), HavocPromotionAndRangePass(parseContext)),
           input = {
             (init to final) {
               havoc("x")
@@ -264,7 +264,7 @@ class PassTests {
             "y" type Int() init "0"
           },
           passes =
-            listOf(NormalizePass(), DeterministicPass(), HavocPromotionAndRange(parseContext)),
+            listOf(NormalizePass(), DeterministicPass(), HavocPromotionAndRangePass(parseContext)),
           input = {
             (init to final) {
               havoc("x")
@@ -287,7 +287,7 @@ class PassTests {
         PassTestData(
           global = { "x" type Int() init "0" },
           passes =
-            listOf(NormalizePass(), DeterministicPass(), RemoveDeadEnds(), UnusedLocRemovalPass()),
+            listOf(NormalizePass(), DeterministicPass(), RemoveDeadEndsPass(), UnusedLocRemovalPass()),
           input = {
             (init to "L1") { assume("1 == 1") }
             (init to "L2") { assume("1 == 1") }
@@ -356,7 +356,7 @@ class PassTests {
         ),
         PassTestData(
           global = {},
-          passes = listOf(NormalizePass(), DeterministicPass(), EliminateSelfLoops()),
+          passes = listOf(NormalizePass(), DeterministicPass(), EliminateSelfLoopsPass()),
           input = { ("L1" to "L1") { assume("1 == 1") } },
           output = null,
         ),
