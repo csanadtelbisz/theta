@@ -53,7 +53,6 @@ import hu.bme.mit.theta.xcfa.analysis.XcfaPrec
 import hu.bme.mit.theta.xcfa.model.*
 import hu.bme.mit.theta.xcfa.passes.AssumeFalseRemovalPass
 import hu.bme.mit.theta.xcfa.passes.AtomicReadsOneWritePass
-import hu.bme.mit.theta.xcfa.passes.DataRaceToAssertionsPass
 import hu.bme.mit.theta.xcfa.passes.MutexToVarPass
 import kotlin.time.measureTime
 
@@ -62,7 +61,7 @@ private val Expr<*>.vars
 
 class XcfaOcChecker(
   xcfa: XCFA,
-  property: ErrorDetection,
+  private val property: ErrorDetection,
   decisionProcedure: OcDecisionProcedureType,
   private val logger: Logger,
   conflictInput: String?,
@@ -73,14 +72,7 @@ class XcfaOcChecker(
 
   private val xcfa: XCFA =
     xcfa.optimizeFurther(
-      listOf(AssumeFalseRemovalPass(), MutexToVarPass(), AtomicReadsOneWritePass()) +
-        property.let {
-          when (it) {
-            ErrorDetection.ERROR_LOCATION -> listOf()
-            ErrorDetection.DATA_RACE -> listOf(DataRaceToAssertionsPass())
-            else -> exit("unsupported property ($it)")
-          }
-        }
+      listOf(AssumeFalseRemovalPass(), MutexToVarPass(), AtomicReadsOneWritePass())
     )
   private var indexing = VarIndexingFactory.indexing(0)
   private val localVars = mutableMapOf<VarDecl<*>, MutableMap<Int, VarDecl<*>>>()
@@ -107,6 +99,7 @@ class XcfaOcChecker(
 
   override fun check(prec: XcfaPrec<UnitPrec>?): SafetyResult<EmptyProof, Cex> =
     let {
+        if (property != ErrorDetection.ERROR_LOCATION) exit("unsupported property $property")
         if (xcfa.initProcedures.size > 1) exit("multiple entry points")
 
         logger.writeln(Logger.Level.MAINSTEP, "Adding constraints...")
@@ -556,10 +549,11 @@ class XcfaOcChecker(
     error("Feature not supported by OC checker: $msg.")
   }
 
-  fun printXcfa() = xcfa.toDot { edge ->
-    "(${
+  fun printXcfa() =
+    xcfa.toDot { edge ->
+      "(${
       events.values.flatMap { it.flatMap { it.value } }.filter { it.edge == edge }
         .joinToString(",") { it.const.name }
     })"
-  }
+    }
 }
