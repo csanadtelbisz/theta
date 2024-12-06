@@ -23,6 +23,7 @@ import hu.bme.mit.theta.analysis.Prec;
 import hu.bme.mit.theta.analysis.algorithm.Proof;
 import hu.bme.mit.theta.analysis.algorithm.SafetyChecker;
 import hu.bme.mit.theta.analysis.algorithm.SafetyResult;
+import hu.bme.mit.theta.analysis.algorithm.arg.ARG;
 import hu.bme.mit.theta.analysis.runtimemonitor.MonitorCheckpoint;
 import hu.bme.mit.theta.analysis.utils.ProofVisualizer;
 import hu.bme.mit.theta.common.Utils;
@@ -31,6 +32,7 @@ import hu.bme.mit.theta.common.logging.Logger.Level;
 import hu.bme.mit.theta.common.logging.NullLogger;
 import hu.bme.mit.theta.common.visualization.writer.JSONWriter;
 import hu.bme.mit.theta.common.visualization.writer.WebDebuggerLogger;
+
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -92,6 +94,9 @@ public final class CegarChecker<P extends Prec, Pr extends Proof, C extends Cex>
         do {
             ++iteration;
 
+            PorLogger.exploredActions.add(0);
+            PorLogger.preservedStates.add(((ARG<?, ?>) proof).size());
+
             logger.write(Level.MAINSTEP, "Iteration %d%n", iteration);
             logger.write(Level.MAINSTEP, "| Checking abstraction...%n");
             final long abstractorStartTime = stopwatch.elapsed(TimeUnit.MILLISECONDS);
@@ -99,6 +104,8 @@ public final class CegarChecker<P extends Prec, Pr extends Proof, C extends Cex>
             abstractorTime += stopwatch.elapsed(TimeUnit.MILLISECONDS) - abstractorStartTime;
             logger.write(
                     Level.MAINSTEP, "| Checking abstraction done, result: %s%n", abstractorResult);
+
+            PorLogger.exploredStates.add(((ARG<?, ?>) proof).size());
 
             if (WebDebuggerLogger.enabled()) {
                 String argGraph =
@@ -156,6 +163,11 @@ public final class CegarChecker<P extends Prec, Pr extends Proof, C extends Cex>
         assert cegarResult != null;
         logger.write(Level.RESULT, "%s%n", cegarResult);
         logger.write(Level.INFO, "%s%n", stats);
+
+        System.err.println("[EXPLORED STATES] " + PorLogger.exploredStates);
+        System.err.println("[EXPLORED ACTIONS] " + PorLogger.exploredActions);
+        System.err.println("[PRESERVED STATES] " + PorLogger.preservedStates);
+
         return cegarResult;
     }
 

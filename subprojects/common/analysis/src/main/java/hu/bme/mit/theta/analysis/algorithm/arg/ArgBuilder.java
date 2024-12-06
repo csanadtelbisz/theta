@@ -16,6 +16,7 @@
 package hu.bme.mit.theta.analysis.algorithm.arg;
 
 import hu.bme.mit.theta.analysis.*;
+import hu.bme.mit.theta.analysis.algorithm.cegar.PorLogger;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -90,6 +91,7 @@ public final class ArgBuilder<S extends State, A extends Action, P extends Prec>
         final Collection<? extends A> actions = lts.getEnabledActionsFor(state, exploredActions, prec);
         final TransFunc<S, ? super A, ? super P> transFunc = analysis.getTransFunc();
         for (final A action : actions) {
+            PorLogger.exploreAction();
             final Collection<? extends S> succStates = transFunc.getSuccStates(state, action, prec);
             for (final S succState : succStates) {
                 if (excludeBottom && succState.isBottom()) {
