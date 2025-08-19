@@ -107,6 +107,8 @@ public final class CegarChecker<P extends Prec, Pr extends Proof, C extends Cex>
                 wdl.addIteration(iteration, argGraph, precString);
             }
 
+            COILogger.newIteration();
+
             if (abstractorResult.isUnsafe()) {
                 MonitorCheckpoint.Checkpoints.execute("CegarChecker.unsafeARG");
 
@@ -156,6 +158,21 @@ public final class CegarChecker<P extends Prec, Pr extends Proof, C extends Cex>
         assert cegarResult != null;
         logger.write(Level.RESULT, "%s%n", cegarResult);
         logger.write(Level.INFO, "%s%n", stats);
+        System.err.println("Abstractor time: " + stats.getAbstractorTimeMs());
+        System.err.println("Refiner time: " + stats.getRefinerTimeMs());
+        System.err.println("COI time: " + COILogger.coiTimer);
+        System.err.println("TransFunc time: " + COILogger.transFuncTimer);
+        System.err.println("Static COI time: " + COILogger.staticCoiTimer);
+        System.err.println("Static COI direct time: " + COILogger.staticCoiDirectTimer);
+        System.err.println("Static COI indirect time: " + COILogger.staticCoiIndirectTimer);
+        System.err.println("COI NOP labels: " + COILogger.nopsList);
+        System.err.println("COI havoc labels: " + COILogger.havocsList);
+        System.err.println("COI all labels: " + COILogger.allLabelsList);
+        System.err.println("Covers: " + COILogger.coversList);
+        System.err.println("Explored actions: " + COILogger.exploredActionsList);
+        System.err.println("Static NOP labels: " + COILogger.staticNops);
+        System.err.println("Static all labels: " + COILogger.staticAllLabels);
+
         return cegarResult;
     }
 

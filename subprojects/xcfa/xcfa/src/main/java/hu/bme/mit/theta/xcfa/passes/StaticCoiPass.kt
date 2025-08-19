@@ -15,6 +15,7 @@
  */
 package hu.bme.mit.theta.xcfa.passes
 
+import hu.bme.mit.theta.analysis.algorithm.cegar.COILogger
 import hu.bme.mit.theta.core.decl.VarDecl
 import hu.bme.mit.theta.core.stmt.AssignStmt
 import hu.bme.mit.theta.core.stmt.HavocStmt
@@ -35,24 +36,32 @@ class StaticCoiPass : ProcedurePass {
   override fun run(builder: XcfaProcedureBuilder): XcfaProcedureBuilder {
     if (!enabled) return builder
 
-    builder.parent.getProcedures().forEach { procedure ->
-      procedure.getEdges().forEach { edge ->
-        val flatLabels = edge.getFlatLabels()
-        flatLabels.forEachIndexed { index, label ->
-          if (label is StmtLabel) {
-            findDirectObservers(edge, label, flatLabels.subList(index + 1, flatLabels.size))
-            findIndirectObservers(label, builder)
+      COILogger.startStaticCoiTimer()
+      builder.parent.getProcedures().forEach { procedure ->
+          procedure.getEdges().forEach { edge ->
+              val flatLabels = edge.getFlatLabels()
+              flatLabels.forEachIndexed { index, label ->
+                  if (label is StmtLabel) {
+                      COILogger.startStaticCoiDirectTimer()
+                      findDirectObservers(edge, label, flatLabels.subList(index + 1, flatLabels.size))
+                      COILogger.stopStaticCoiDirectTimer()
+                      COILogger.startStaticCoiIndirectTimer()
+                      findIndirectObservers(label, builder)
+                      COILogger.stopStaticCoiIndirectTimer()
+                  }
+              }
           }
-        }
       }
-    }
 
     builder.getEdges().toSet().forEach { edge ->
       val labels = edge.getFlatLabels()
       val kept = mutableListOf<XcfaLabel>()
       labels.forEach { label ->
+        COILogger.incStaticAllLabels()
         if (!label.canBeSimplified || isObserved(label)) {
           kept.add(label)
+        } else {
+          COILogger.incStaticNops()
         }
       }
       if (kept.size != labels.size) {
@@ -60,6 +69,7 @@ class StaticCoiPass : ProcedurePass {
         builder.addEdge(edge.withLabel(SequenceLabel(kept, edge.label.metadata)))
       }
     }
+    COILogger.stopStaticCoiTimer()
 
     return builder
   }
