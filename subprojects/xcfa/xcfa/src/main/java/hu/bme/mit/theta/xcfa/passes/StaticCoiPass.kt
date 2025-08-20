@@ -36,22 +36,22 @@ class StaticCoiPass : ProcedurePass {
   override fun run(builder: XcfaProcedureBuilder): XcfaProcedureBuilder {
     if (!enabled) return builder
 
-      COILogger.startStaticCoiTimer()
-      builder.parent.getProcedures().forEach { procedure ->
-          procedure.getEdges().forEach { edge ->
-              val flatLabels = edge.getFlatLabels()
-              flatLabels.forEachIndexed { index, label ->
-                  if (label is StmtLabel) {
-                      COILogger.startStaticCoiDirectTimer()
-                      findDirectObservers(edge, label, flatLabels.subList(index + 1, flatLabels.size))
-                      COILogger.stopStaticCoiDirectTimer()
-                      COILogger.startStaticCoiIndirectTimer()
-                      findIndirectObservers(label, builder)
-                      COILogger.stopStaticCoiIndirectTimer()
-                  }
-              }
+    COILogger.startStaticCoiTimer()
+    builder.parent.getProcedures().forEach { procedure ->
+      procedure.getEdges().forEach { edge ->
+        val flatLabels = edge.getFlatLabels()
+        flatLabels.forEachIndexed { index, label ->
+          if (label is StmtLabel) {
+            COILogger.startStaticCoiDirectTimer()
+            findDirectObservers(edge, label, flatLabels.subList(index + 1, flatLabels.size))
+            COILogger.stopStaticCoiDirectTimer()
+            COILogger.startStaticCoiIndirectTimer()
+            findIndirectObservers(label, builder)
+            COILogger.stopStaticCoiIndirectTimer()
           }
+        }
       }
+    }
 
     builder.getEdges().toSet().forEach { edge ->
       val labels = edge.getFlatLabels()

@@ -55,31 +55,32 @@ abstract class XcfaCoi(protected val xcfa: XCFA) {
 
   abstract val lts: LTS<S, A>
 
-    val transFunc = TransFunc<S, A, XcfaPrec<out Prec>> { state, action, prec ->
-        val a = action.transFuncVersion ?: action
-        action.label.getFlatLabels().forEach {
-            if (it is NopLabel) COILogger.decNops()
-            if (it is StmtLabel && it.stmt is HavocStmt<*>) COILogger.decHavocs()
-        }
-        a.label.getFlatLabels().forEach {
-            COILogger.incAllLabels()
-            if (it is NopLabel) COILogger.incNops()
-            if (it is StmtLabel && it.stmt is HavocStmt<*>) COILogger.incHavocs()
-        }
-        COILogger.incExploredActions()
+  val transFunc =
+    TransFunc<S, A, XcfaPrec<out Prec>> { state, action, prec ->
+      val a = action.transFuncVersion ?: action
+      action.label.getFlatLabels().forEach {
+        if (it is NopLabel) COILogger.decNops()
+        if (it is StmtLabel && it.stmt is HavocStmt<*>) COILogger.decHavocs()
+      }
+      a.label.getFlatLabels().forEach {
+        COILogger.incAllLabels()
+        if (it is NopLabel) COILogger.incNops()
+        if (it is StmtLabel && it.stmt is HavocStmt<*>) COILogger.incHavocs()
+      }
+      COILogger.incExploredActions()
 
-        COILogger.startTransFuncTimer()
-        val r = coreTransFunc.getSuccStates(state, a, prec)
-        COILogger.stopTransFuncTimer()
+      COILogger.startTransFuncTimer()
+      val r = coreTransFunc.getSuccStates(state, a, prec)
+      COILogger.stopTransFuncTimer()
 
-        r
+      r
     }
 
   init {
     COILogger.startCoiTimer()
-      xcfa.procedures.forEach { tarjan(it.initLoc) }
-  COILogger.stopCoiTimer()
-    }
+    xcfa.procedures.forEach { tarjan(it.initLoc) }
+    COILogger.stopCoiTimer()
+  }
 
   private fun tarjan(initLoc: XcfaLocation) {
     var sccCnt = 0
