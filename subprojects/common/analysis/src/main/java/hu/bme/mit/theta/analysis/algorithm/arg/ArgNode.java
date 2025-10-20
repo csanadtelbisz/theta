@@ -29,7 +29,7 @@ import java.util.stream.Stream;
 
 public final class ArgNode<S extends State, A extends Action> {
 
-    final ARG<S, A> arg;
+    public final ARG<S, A> arg;
 
     private final int id;
     private final int depth;

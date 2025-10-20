@@ -26,9 +26,11 @@ import hu.bme.mit.theta.analysis.waitlist.Waitlist
 import hu.bme.mit.theta.xcfa.analysis.XcfaAction
 import hu.bme.mit.theta.xcfa.analysis.XcfaState
 import hu.bme.mit.theta.xcfa.analysis.getXcfaLts
-import hu.bme.mit.theta.xcfa.model.AtomicFenceLabel
+import hu.bme.mit.theta.xcfa.model.AtomicFenceLabel.Companion.ATOMIC_MUTEX
+import hu.bme.mit.theta.xcfa.model.FenceLabel
 import hu.bme.mit.theta.xcfa.model.XCFA
 import hu.bme.mit.theta.xcfa.utils.collectIndirectGlobalVarAccesses
+import hu.bme.mit.theta.xcfa.utils.getFlatLabels
 import hu.bme.mit.theta.xcfa.utils.isWritten
 import java.util.*
 import java.util.stream.Collectors
@@ -77,8 +79,8 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
     private val simpleXcfaLts = getXcfaLts()
 
     /** The enabled actions of a state. */
-    private val State.enabled: Collection<A>
-      get() = simpleXcfaLts.getEnabledActionsFor(this as S)
+    private val S.enabled: Collection<A>
+      get() = simpleXcfaLts.getEnabledActionsFor(this)
 
     /** Partial order of states considering sleep sets (unexplored behavior). */
     fun <E : ExprState> getPartialOrder(partialOrd: PartialOrd<E>) =
@@ -91,15 +93,15 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
 
   /** Represents an element of the DFS search stack. */
   private data class StackItem(
-    val node: Node, // the ARG node
-    val processLastAction: Map<Int, Int> =
-      mutableMapOf(), // the index of the last actions of processes in the search stack
-    val lastDependents: Map<Int, Map<Int, Int>> =
-      mutableMapOf(), // for each process p it stores the index of the last action of each process
-    // that is dependent with the last actions of p
-    val mutexLocks: MutableMap<String, Int> =
-      mutableMapOf(), // for each locked mutex the index of the state on the stack where the mutex
-    // has been locked
+    // the ARG node
+    val node: Node,
+    // the index of the last actions of processes in the search stack
+    val processLastAction: Map<Int, Int> = mutableMapOf(),
+    // for each process p it stores the index of the last action of each process that is dependent
+    // with the last actions of p
+    val lastDependents: Map<Int, Map<Int, Int>> = mutableMapOf(),
+    // for each locked mutex the index of the state on the stack where the mutex has been locked
+    val mutexLocks: MutableMap<String, Int> = mutableMapOf(),
     private val _backtrack: MutableSet<A> = mutableSetOf(),
     private val _sleep: MutableSet<A> = mutableSetOf(),
   ) {
@@ -145,6 +147,8 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
     return setOf(actionToExplore)
   }
 
+  val sporLts = XcfaSporLts(xcfa)
+
   /**
    * A waitlist implementation that controls the search: from which state do we need to explore,
    * pops states from the search stack.
@@ -188,25 +192,30 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
           // detect possible races
           exploreLazily()
         }
+
         while (
           stack.isNotEmpty() &&
             (last.node.isSubsumed ||
               (last.node.isExpanded && last.backtrack.subtract(last.sleep).isEmpty()))
-        ) { // until we need to pop (the last is covered or not feasible, or it has no more actions
-          // that need to be explored
+        ) { // until the last is covered/not feasible, or it has no more action to be explored
           if (stack.size >= 2) {
             val lastButOne = stack[stack.size - 2]
-            val mutexNeverReleased =
-              last.mutexLocks.containsKey(AtomicFenceLabel.ATOMIC_MUTEX.name) &&
-                (last.state.mutexes.keys subtract lastButOne.state.mutexes.keys).contains(
-                  AtomicFenceLabel.ATOMIC_MUTEX.name
-                )
-            if (last.node.explored.isEmpty() || mutexNeverReleased) {
-              // if a mutex is never released another action (practically all the others) have to be
-              // explored
-              lastButOne.backtrack = lastButOne.state.enabled.toMutableSet()
+
+            val neverReleasedMutexes = last.mutexLocks
+              .filter { (_, index) -> index == stack.size - 1 }
+              .map { it.key }
+
+            neverReleasedMutexes.forEach { mutex ->
+              val blockedActions = lastButOne.state.enabled.filter { action ->
+                mutex == ATOMIC_MUTEX.name ||
+                  action.edge.label
+                    .getFlatLabels()
+                    .any { it is FenceLabel && mutex in it.blockingMutexes.map { m -> m.name } }
+              }
+              lastButOne.backtrack.addAll(blockedActions)
             }
           }
+          System.err.println("DPOR explored size: ${last.node.explored.size} / SPOR size: ${sporLts.getEnabledActionsFor(last.state).size} (ARG size: ${last.node.arg.size()})")
           stack.pop()
           exploreLazily()
         }
@@ -251,11 +260,8 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
           val node = stack[index].node
 
           val action = node.inEdge.get().action
-          if (relevantProcesses.contains(action.pid)) {
-            if (
-              newLastDependents.containsKey(action.pid) &&
-                index <= checkNotNull(newLastDependents[action.pid])
-            ) {
+          if (action.pid in relevantProcesses) {
+            if (action.pid in newLastDependents && index <= newLastDependents[action.pid]!!) {
               // there is an action a' such that  action -> a' -> newaction  (->: happens-before)
               relevantProcesses.remove(action.pid)
             } else if (dependent(newaction, action)) {
@@ -273,8 +279,7 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
               }
 
               newLastDependents[action.pid] = index
-              newLastDependents =
-                max(newLastDependents, checkNotNull(stack[index].lastDependents[action.pid]))
+              newLastDependents = max(newLastDependents, stack[index].lastDependents[action.pid]!!)
               relevantProcesses.remove(action.pid)
             }
           }
@@ -358,8 +363,9 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
         virtualStack.push(node)
         while (virtualStack.isNotEmpty()) {
           val visiting = virtualStack.pop()
-          while (stack.size > startStackSize && stack.peek().node != visiting.parent.get()) stack
-            .pop()
+          while (stack.size > startStackSize && stack.peek().node != visiting.parent.get()) {
+            stack.pop()
+          }
 
           if (node != visiting) {
             if (!push(visiting, startStackSize) || noInfluenceOnRealExploration(realStackSize))
@@ -444,7 +450,7 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
       private fun noInfluenceOnRealExploration(realStackSize: Int) =
         last.processLastAction.keys.all { process ->
           last.lastDependents.containsKey(process) &&
-            checkNotNull(last.lastDependents[process]).all { (_, index) -> index >= realStackSize }
+            last.lastDependents[process]!!.all { (_, index) -> index >= realStackSize }
         }
     }
 
