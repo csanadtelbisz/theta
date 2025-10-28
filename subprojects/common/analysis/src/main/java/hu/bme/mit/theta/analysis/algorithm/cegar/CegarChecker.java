@@ -101,6 +101,8 @@ public final class CegarChecker<P extends Prec, Pr extends Proof, C extends Cex>
             logger.write(
                     Level.MAINSTEP, "| Checking abstraction done, result: %s%n", abstractorResult);
 
+            System.err.println("ARG size: " + ((ARG)proof).size());
+
             if (WebDebuggerLogger.enabled()) {
                 String argGraph =
                         JSONWriter.getInstance().writeString(proofVisualizer.visualize(proof));
@@ -153,8 +155,6 @@ public final class CegarChecker<P extends Prec, Pr extends Proof, C extends Cex>
         } else if (refinerResult.isUnsafe()) {
             cegarResult = SafetyResult.unsafe(refinerResult.asUnsafe().getCex(), proof, stats);
         }
-
-        System.err.println("ARG size: " + ((ARG)proof).size());
 
         assert cegarResult != null;
         logger.write(Level.RESULT, "%s%n", cegarResult);
