@@ -276,9 +276,7 @@ open class XcfaSporLts(protected val xcfa: XCFA) :
     if (expr == True()) return true
     return WithPushPop(dependencySolver).use {
       dependencySolver.add(PathUtils.unfold(state.sGlobal.toExpr(), 0))
-      dependencySolver.add(
-        PathUtils.unfold(expr, 0)
-      ) // is it always given that the state will produce 0 indexed constants?
+      dependencySolver.add(PathUtils.unfold(expr, 0))
       dependencySolver.check().isSat // two pointers may point to the same memory location
     }
   }

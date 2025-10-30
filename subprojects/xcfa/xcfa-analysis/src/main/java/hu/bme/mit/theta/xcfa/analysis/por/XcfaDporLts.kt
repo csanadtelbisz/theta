@@ -20,9 +20,20 @@ import hu.bme.mit.theta.analysis.PartialOrd
 import hu.bme.mit.theta.analysis.Prec
 import hu.bme.mit.theta.analysis.State
 import hu.bme.mit.theta.analysis.algorithm.arg.ArgNode
+import hu.bme.mit.theta.analysis.expl.ExplState
 import hu.bme.mit.theta.analysis.expr.ExprState
 import hu.bme.mit.theta.analysis.ptr.PtrState
 import hu.bme.mit.theta.analysis.waitlist.Waitlist
+import hu.bme.mit.theta.core.model.ImmutableValuation
+import hu.bme.mit.theta.core.type.Expr
+import hu.bme.mit.theta.core.type.abstracttype.AbstractExprs.Eq
+import hu.bme.mit.theta.core.type.booltype.BoolExprs.*
+import hu.bme.mit.theta.core.type.booltype.BoolType
+import hu.bme.mit.theta.core.utils.ExprUtils
+import hu.bme.mit.theta.core.utils.PathUtils
+import hu.bme.mit.theta.solver.Solver
+import hu.bme.mit.theta.solver.utils.WithPushPop
+import hu.bme.mit.theta.solver.z3.Z3SolverFactory
 import hu.bme.mit.theta.xcfa.analysis.XcfaAction
 import hu.bme.mit.theta.xcfa.analysis.XcfaState
 import hu.bme.mit.theta.xcfa.analysis.getXcfaLts
@@ -30,6 +41,7 @@ import hu.bme.mit.theta.xcfa.model.AtomicFenceLabel.Companion.ATOMIC_MUTEX
 import hu.bme.mit.theta.xcfa.model.FenceLabel
 import hu.bme.mit.theta.xcfa.model.XCFA
 import hu.bme.mit.theta.xcfa.utils.collectIndirectGlobalVarAccesses
+import hu.bme.mit.theta.xcfa.utils.dereferencesWithAccessType
 import hu.bme.mit.theta.xcfa.utils.getFlatLabels
 import hu.bme.mit.theta.xcfa.utils.isWritten
 import java.util.*
@@ -69,11 +81,13 @@ private val Node.explored: Set<A>
  * @see <a href="https://doi.org/10.1145/3073408">Source Sets: A Foundation for Optimal Dynamic
  *   Partial Order Reduction</a>
  */
-open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
+open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
 
   companion object {
 
     var random: Random = Random.Default
+
+    private val dependencySolver: Solver by lazy { Z3SolverFactory.getInstance().createSolver() }
 
     /** Simple LTS that returns the enabled actions in a state. */
     private val simpleXcfaLts = getXcfaLts()
@@ -201,21 +215,22 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
           if (stack.size >= 2) {
             val lastButOne = stack[stack.size - 2]
 
-            val neverReleasedMutexes = last.mutexLocks
-              .filter { (_, index) -> index == stack.size - 1 }
-              .map { it.key }
+            val neverReleasedMutexes =
+              last.mutexLocks.filter { (_, index) -> index == stack.size - 1 }.map { it.key }
 
             neverReleasedMutexes.forEach { mutex ->
-              val blockedActions = lastButOne.state.enabled.filter { action ->
-                mutex == ATOMIC_MUTEX.name ||
-                  action.edge.label
-                    .getFlatLabels()
-                    .any { it is FenceLabel && mutex in it.blockingMutexes.map { m -> m.name } }
-              }
+              val blockedActions =
+                lastButOne.state.enabled.filter { action ->
+                  mutex == ATOMIC_MUTEX.name ||
+                    action.edge.label.getFlatLabels().any {
+                      it is FenceLabel && mutex in it.blockingMutexes.map { m -> m.name }
+                    }
+                }
               lastButOne.backtrack.addAll(blockedActions)
             }
           }
-          System.err.println("DPOR explored size: ${last.node.explored.size} / SPOR size: ${sporLts.getEnabledActionsFor(last.state).size} (ARG size: ${last.node.arg.size()})")
+          // System.err.println("DPOR explored size: ${last.node.explored.size} / SPOR size:
+          // ${sporLts.getEnabledActionsFor(last.state).size} (ARG size: ${last.node.arg.size()})")
           stack.pop()
           exploreLazily()
         }
@@ -243,8 +258,8 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
           return true
         }
 
-        val newaction = item.inEdge.get().action
-        val process = newaction.pid
+        val newAction = item.inEdge.get().action
+        val process = newAction.pid
 
         val newProcessLastAction =
           last.processLastAction.toMutableMap().apply { this[process] = stack.size }
@@ -264,9 +279,9 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
             if (action.pid in newLastDependents && index <= newLastDependents[action.pid]!!) {
               // there is an action a' such that  action -> a' -> newaction  (->: happens-before)
               relevantProcesses.remove(action.pid)
-            } else if (dependent(newaction, action)) {
+            } else if (dependent(newAction, action)) {
               // reversible race
-              val v = notdep(index, newaction)
+              val v = notdep(index, newAction)
               val iv = initials(index - 1, v)
               if (iv.isEmpty()) continue // due to mutex (e.g. atomic block)
 
@@ -303,7 +318,7 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
           if (isVirtualExploration) {
             item.state.sleep
           } else {
-            last.sleep.filter { !dependent(it, newaction) }.toMutableSet()
+            last.sleep.filter { !dependent(it, newAction) }.toMutableSet()
           }
         val enabledActions = item.state.enabled subtract newSleep
         val newBacktrack =
@@ -455,9 +470,14 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
     }
 
   /** Returns true if a and b are dependent actions. */
-  protected open fun dependent(a: A, b: A): Boolean {
-    if (a.pid == b.pid) return true
+  protected fun dependent(a: A, b: A, aSource: S? = null, bSource: S? = null): Boolean =
+    dependentControlFlow(a, b) ||
+      dependentGlobalVar(a, b) ||
+      dependentMemLoc(a, b, aSource, bSource)
 
+  protected fun dependentControlFlow(a: A, b: A): Boolean = a.pid == b.pid
+
+  protected open fun dependentGlobalVar(a: A, b: A): Boolean {
     val aGlobalVars = a.edge.collectIndirectGlobalVarAccesses(xcfa)
     val bGlobalVars = b.edge.collectIndirectGlobalVarAccesses(xcfa)
     // dependent if they access the same variable (at least one write)
@@ -465,12 +485,54 @@ open class XcfaDporLts(private val xcfa: XCFA) : LTS<S, A> {
       aGlobalVars[it].isWritten || bGlobalVars[it].isWritten
     }
   }
+
+  protected fun dependentMemLoc(a: A, b: A, aSource: S? = null, bSource: S? = null): Boolean {
+    val aMemLocs = a.label.dereferencesWithAccessType
+    val bMemLocs = b.label.dereferencesWithAccessType
+    if (aMemLocs.isEmpty() || bMemLocs.isEmpty()) return false
+
+    if (
+      (aMemLocs.keys intersect bMemLocs.keys).any {
+        aMemLocs[it].isWritten || bMemLocs[it].isWritten
+      }
+    )
+      return true
+
+    val aStateVal =
+      (aSource?.sGlobal?.innerState as? ExplState)?.`val` ?: ImmutableValuation.empty()
+    val bStateVal =
+      (bSource?.sGlobal?.innerState as? ExplState)?.`val` ?: ImmutableValuation.empty()
+    val expr: Expr<BoolType> =
+      ExprUtils.simplify(
+        Or(
+          aMemLocs.flatMap { (aMemLoc, aAccess) ->
+            bMemLocs.mapNotNull { (bMemLoc, bAccess) ->
+              if (aAccess.isWritten || bAccess.isWritten) {
+                val aArray = PathUtils.unfold(ExprUtils.simplify(aMemLoc.array, aStateVal), 0)
+                val aOffset = PathUtils.unfold(ExprUtils.simplify(aMemLoc.offset, aStateVal), 0)
+                val bArray = PathUtils.unfold(ExprUtils.simplify(bMemLoc.array, bStateVal), 1)
+                val bOffset = PathUtils.unfold(ExprUtils.simplify(bMemLoc.offset, bStateVal), 1)
+                And(Eq(aArray, bArray), Eq(aOffset, bOffset))
+              } else null
+            }
+          }
+        )
+      )
+    if (expr == True()) return true
+
+    return WithPushPop(dependencySolver).use {
+      aSource?.let { dependencySolver.add(PathUtils.unfold(it.sGlobal.toExpr(), 0)) }
+      bSource?.let { dependencySolver.add(PathUtils.unfold(it.sGlobal.toExpr(), 1)) }
+      dependencySolver.add(expr)
+      dependencySolver.check().isSat // two pointers may point to the same memory location
+    }
+  }
 }
 
 /**
  * Abstraction-aware dynamic partial order reduction (AADPOR) algorithm for state space exploration.
  */
-class XcfaAadporLts(private val xcfa: XCFA) : XcfaDporLts(xcfa) {
+class XcfaAadporLts(override val xcfa: XCFA) : XcfaDporLts(xcfa) {
 
   /** The current precision of the abstraction. */
   private var prec: Prec? = null
@@ -486,10 +548,8 @@ class XcfaAadporLts(private val xcfa: XCFA) : XcfaDporLts(xcfa) {
   }
 
   /** Returns true if a and b are dependent actions in the current abstraction. */
-  override fun dependent(a: A, b: A): Boolean {
-    if (a.pid == b.pid) return true
-
-    val precVars = prec?.usedVars?.toSet() ?: return super.dependent(a, b)
+  override fun dependentGlobalVar(a: A, b: A): Boolean {
+    val precVars = prec?.usedVars?.toSet() ?: return super.dependentGlobalVar(a, b)
     val aGlobalVars = a.edge.collectIndirectGlobalVarAccesses(xcfa)
     val bGlobalVars = b.edge.collectIndirectGlobalVarAccesses(xcfa)
     // dependent if they access the same variable in the precision (at least one write)
