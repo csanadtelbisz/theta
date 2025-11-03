@@ -15,15 +15,12 @@
  */
 package hu.bme.mit.theta.analysis.algorithm.cegar;
 
-import static com.google.common.base.Preconditions.checkNotNull;
-
 import com.google.common.base.Stopwatch;
 import hu.bme.mit.theta.analysis.Cex;
 import hu.bme.mit.theta.analysis.Prec;
 import hu.bme.mit.theta.analysis.algorithm.Proof;
 import hu.bme.mit.theta.analysis.algorithm.SafetyChecker;
 import hu.bme.mit.theta.analysis.algorithm.SafetyResult;
-import hu.bme.mit.theta.analysis.algorithm.arg.ARG;
 import hu.bme.mit.theta.analysis.runtimemonitor.MonitorCheckpoint;
 import hu.bme.mit.theta.analysis.utils.ProofVisualizer;
 import hu.bme.mit.theta.common.Utils;
@@ -32,7 +29,10 @@ import hu.bme.mit.theta.common.logging.Logger.Level;
 import hu.bme.mit.theta.common.logging.NullLogger;
 import hu.bme.mit.theta.common.visualization.writer.JSONWriter;
 import hu.bme.mit.theta.common.visualization.writer.WebDebuggerLogger;
+
 import java.util.concurrent.TimeUnit;
+
+import static com.google.common.base.Preconditions.checkNotNull;
 
 /**
  * Counterexample-Guided Abstraction Refinement (CEGAR) loop implementation, that uses an Abstractor
@@ -100,8 +100,6 @@ public final class CegarChecker<P extends Prec, Pr extends Proof, C extends Cex>
             abstractorTime += stopwatch.elapsed(TimeUnit.MILLISECONDS) - abstractorStartTime;
             logger.write(
                     Level.MAINSTEP, "| Checking abstraction done, result: %s%n", abstractorResult);
-
-            System.err.println("ARG size: " + ((ARG)proof).size());
 
             if (WebDebuggerLogger.enabled()) {
                 String argGraph =

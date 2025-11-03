@@ -161,8 +161,6 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
     return setOf(actionToExplore)
   }
 
-  val sporLts = XcfaSporLts(xcfa)
-
   /**
    * A waitlist implementation that controls the search: from which state do we need to explore,
    * pops states from the search stack.
@@ -229,8 +227,6 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
               lastButOne.backtrack.addAll(blockedActions)
             }
           }
-          // System.err.println("DPOR explored size: ${last.node.explored.size} / SPOR size:
-          // ${sporLts.getEnabledActionsFor(last.state).size} (ARG size: ${last.node.arg.size()})")
           stack.pop()
           exploreLazily()
         }
@@ -275,11 +271,12 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
           val node = stack[index].node
 
           val action = node.inEdge.get().action
+          val prevState = node.inEdge.get().source.state
           if (action.pid in relevantProcesses) {
             if (action.pid in newLastDependents && index <= newLastDependents[action.pid]!!) {
               // there is an action a' such that  action -> a' -> newaction  (->: happens-before)
               relevantProcesses.remove(action.pid)
-            } else if (dependent(newAction, action)) {
+            } else if (dependent(action, newAction) && reversible(prevState, action, newAction)) {
               // reversible race
               val v = notdep(index, newAction)
               val iv = initials(index - 1, v)
@@ -527,6 +524,13 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
       dependencySolver.check().isSat // two pointers may point to the same memory location
     }
   }
+
+  private fun reversible(stateBeforeEarlier: S, earlier: A, latter: A): Boolean =
+    latter.label.getFlatLabels().filterIsInstance<FenceLabel>().all { fence ->
+      fence.blockingMutexes.none { mutex ->
+        stateBeforeEarlier.mutexes[mutex.name]?.contains(earlier.pid) == true
+      }
+    }
 }
 
 /**
