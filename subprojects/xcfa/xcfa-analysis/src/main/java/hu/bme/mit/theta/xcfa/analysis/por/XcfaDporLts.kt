@@ -74,6 +74,10 @@ private var State.reExplored: Boolean? by reExploredDelegate
 private val Node.explored: Set<A>
   get() = outEdges.map { it.action }.collect(Collectors.toSet())
 
+// for debugging purposes:
+var State.number: Int by extension()
+var stateNumber = 0
+
 /**
  * An LTS implementing a dynamic partial order reduction algorithm (Source-DPOR) for state space
  * exploration.
@@ -85,7 +89,7 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
 
   companion object {
 
-    var random: Random = Random.Default
+    var random: Random = Random(0)//Random.Default
 
     private val dependencySolver: Solver by lazy { Z3SolverFactory.getInstance().createSolver() }
 
@@ -249,6 +253,7 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
 
       /** Pushes an item to the search stack. */
       private fun push(item: Node, virtualLimit: Int): Boolean {
+        item.state.number = stateNumber++ // for debugging purposes
         if (!item.inEdge.isPresent) { // the first item is simply put on the stack
           stack.push(StackItem(item, _backtrack = item.state.enabled.toMutableSet()))
           return true

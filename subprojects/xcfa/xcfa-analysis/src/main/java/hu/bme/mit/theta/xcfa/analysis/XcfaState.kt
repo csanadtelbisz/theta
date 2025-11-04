@@ -25,6 +25,7 @@ import hu.bme.mit.theta.core.type.booltype.BoolType
 import hu.bme.mit.theta.core.type.inttype.IntExprs.Int
 import hu.bme.mit.theta.core.utils.TypeUtils.cast
 import hu.bme.mit.theta.xcfa.analysis.XcfaProcessState.Companion.createLookup
+import hu.bme.mit.theta.xcfa.analysis.por.number
 import hu.bme.mit.theta.xcfa.model.*
 import hu.bme.mit.theta.xcfa.model.AtomicFenceLabel.Companion.ATOMIC_MUTEX
 import hu.bme.mit.theta.xcfa.passes.changeVars
@@ -300,7 +301,7 @@ constructor(
   }
 
   override fun toString(): String {
-    return "$processes {$sGlobal, mutex=$mutexes${if (bottom) ", bottom" else ""}}"
+    return "[${number}] $processes {$sGlobal, mutex=$mutexes${if (bottom) ", bottom" else ""}}"
   }
 }
 
