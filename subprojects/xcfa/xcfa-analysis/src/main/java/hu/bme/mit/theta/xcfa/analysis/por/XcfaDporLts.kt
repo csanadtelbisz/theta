@@ -50,29 +50,52 @@ import java.util.stream.Stream
 import kotlin.math.max
 import kotlin.random.Random
 
+/** Wrapper class for actions to redefine equality and hash code based on pid and edge only. */
+private class XcfaActionWrapper(val action: XcfaAction) {
+
+  val pid = action.pid
+  val edge = action.edge
+
+  override fun equals(other: Any?): Boolean {
+    if (this === other) return true
+    if (other !is XcfaActionWrapper) return false
+    if (pid != other.pid) return false
+    if (edge != other.edge) return false
+    return true
+  }
+
+  override fun hashCode(): Int {
+    var result = pid
+    result = 31 * result + edge.hashCode()
+    return result
+  }
+}
+
 /** Type definitions for states, actions and ARG nodes. */
 private typealias S = XcfaState<out PtrState<out ExprState>>
 
 private typealias A = XcfaAction
 
-private typealias Node = ArgNode<out S, A>
+private typealias AW = XcfaActionWrapper
+
+private typealias Node = ArgNode<out S, XcfaAction>
 
 /** Backtrack set of a state: actions to be explored when backtracking in DFS. */
-private var State.backtrack: MutableSet<A> by extension()
+private var State.backtrack: MutableSet<AW> by extension()
 
 /** Sleep set of a state: actions that need not be explored. */
-private var State.sleep: MutableSet<A> by extension()
+private var State.sleep: MutableSet<AW> by extension()
 
 /** Set of explored actions from a state. */
-private var State.explored: MutableSet<A> by extension()
+private var State.explored: MutableSet<AW> by extension()
 
 /** Reexplored actions in a new CEGAR iteration (only relevant when lazy pruning is used). */
 private val reExploredDelegate = nullableExtension<State, Boolean?>()
 private var State.reExplored: Boolean? by reExploredDelegate
 
 /** Explored actions from an ARG node. */
-private val Node.explored: Set<A>
-  get() = outEdges.map { it.action }.collect(Collectors.toSet())
+private val Node.explored: Set<AW>
+  get() = outEdges.map { AW(it.action) }.collect(Collectors.toSet())
 
 // for debugging purposes:
 var State.number: Int by extension()
@@ -89,7 +112,7 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
 
   companion object {
 
-    var random: Random = Random(0)//Random.Default
+    var random: Random = Random(0) // Random.Default
 
     private val dependencySolver: Solver by lazy { Z3SolverFactory.getInstance().createSolver() }
 
@@ -97,8 +120,8 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
     private val simpleXcfaLts = getXcfaLts()
 
     /** The enabled actions of a state. */
-    private val S.enabled: Collection<A>
-      get() = simpleXcfaLts.getEnabledActionsFor(this)
+    private val S.enabled: Collection<AW>
+      get() = simpleXcfaLts.getEnabledActionsFor(this).map { AW(it) }
 
     /** Partial order of states considering sleep sets (unexplored behavior). */
     fun <E : ExprState> getPartialOrder(partialOrd: PartialOrd<E>) =
@@ -120,8 +143,8 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
     val lastDependents: Map<Int, Map<Int, Int>> = mutableMapOf(),
     // for each locked mutex the index of the state on the stack where the mutex has been locked
     val mutexLocks: MutableMap<String, Int> = mutableMapOf(),
-    private val _backtrack: MutableSet<A> = mutableSetOf(),
-    private val _sleep: MutableSet<A> = mutableSetOf(),
+    private val _backtrack: MutableSet<AW> = mutableSetOf(),
+    private val _sleep: MutableSet<AW> = mutableSetOf(),
   ) {
 
     val action: A
@@ -130,12 +153,12 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
     val state: S
       get() = node.state // the current state of this stack item
 
-    var backtrack: MutableSet<A> by node.state::backtrack // backtrack set of the current state
+    var backtrack: MutableSet<AW> by node.state::backtrack // backtrack set of the current state
 
-    var sleep: MutableSet<A> by node.state::sleep // sleep set of the current state
+    var sleep: MutableSet<AW> by node.state::sleep // sleep set of the current state
       private set
 
-    var explored: MutableSet<A> by node.state::explored // explored actions from the current state
+    var explored: MutableSet<AW> by node.state::explored // explored actions from the current state
       private set
 
     init {
@@ -162,7 +185,7 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
     last.backtrack.addAll(state.enabled.filter { it.pid == actionToExplore.pid })
     last.sleep.add(actionToExplore)
     last.explored.add(actionToExplore)
-    return setOf(actionToExplore)
+    return setOf(actionToExplore.action)
   }
 
   /**
@@ -320,7 +343,7 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
           if (isVirtualExploration) {
             item.state.sleep
           } else {
-            last.sleep.filter { !dependent(it, newAction) }.toMutableSet()
+            last.sleep.filter { !dependent(it.action, newAction) }.toMutableSet()
           }
         val enabledActions = item.state.enabled subtract newSleep
         val newBacktrack =
@@ -407,12 +430,12 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
           val lazilyExplorable =
             last.node.outEdges
               .toList()
-              .filter { it.target.state.reExplored != true && it.action !in last.sleep }
+              .filter { it.target.state.reExplored != true && AW(it.action) !in last.sleep }
               .toSet()
           if (lazilyExplorable.isEmpty()) return
 
           val edgeToExplore = lazilyExplorable.random(random)
-          val actionToExplore = edgeToExplore.action
+          val actionToExplore = AW(edgeToExplore.action)
           last.backtrack.addAll(last.state.enabled.filter { it.pid == actionToExplore.pid })
           last.sleep.add(actionToExplore)
           last.explored.add(actionToExplore)
@@ -430,28 +453,27 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
           .toMutableMap()
 
       /** See the article for the definition of notdep. */
-      private fun notdep(start: Int, action: A): List<A> {
+      private fun notdep(start: Int, action: A): List<AW> {
         val e = stack[start].action
-        return stack
-          .slice(start + 1 until stack.size)
-          .filterIndexed { index, item ->
-            item.node.parent.get() == stack[start + 1 + index - 1].node &&
-              !dependent(e, item.action)
-          }
-          .map { it.action }
-          .toMutableList()
-          .apply { add(action) }
+        return (stack
+            .slice(start + 1 until stack.size)
+            .filterIndexed { index, item ->
+              item.node.parent.get() == stack[start + 1 + index - 1].node &&
+                !dependent(e, item.action)
+            }
+            .map { it.action } + action)
+          .map { AW(it) }
       }
 
       /** See the article for the definition of initials. */
-      private fun initials(start: Int, sequence: List<A>): Set<A> {
+      private fun initials(start: Int, sequence: List<AW>): Set<AW> {
         val state = stack[start].node.state
         return (state.enabled subtract (state.sleep subtract state.explored))
           .filter { enabledAction ->
             for (action in sequence) {
               if (action == enabledAction) {
                 return@filter true
-              } else if (dependent(enabledAction, action)) {
+              } else if (dependent(enabledAction.action, action.action)) {
                 return@filter false
               }
             }
