@@ -41,7 +41,7 @@ import hu.bme.mit.theta.xcfa.model.AtomicFenceLabel.Companion.ATOMIC_MUTEX
 import hu.bme.mit.theta.xcfa.model.FenceLabel
 import hu.bme.mit.theta.xcfa.model.XCFA
 import hu.bme.mit.theta.xcfa.utils.collectIndirectGlobalVarAccesses
-import hu.bme.mit.theta.xcfa.utils.dereferencesWithAccessType
+import hu.bme.mit.theta.xcfa.utils.collectIndirectMemoryAccesses
 import hu.bme.mit.theta.xcfa.utils.getFlatLabels
 import hu.bme.mit.theta.xcfa.utils.isWritten
 import java.util.*
@@ -511,8 +511,8 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
   }
 
   protected fun dependentMemLoc(a: A, b: A, aSource: S? = null, bSource: S? = null): Boolean {
-    val aMemLocs = a.label.dereferencesWithAccessType
-    val bMemLocs = b.label.dereferencesWithAccessType
+    val aMemLocs = a.edge.collectIndirectMemoryAccesses()
+    val bMemLocs = b.edge.collectIndirectMemoryAccesses()
     if (aMemLocs.isEmpty() || bMemLocs.isEmpty()) return false
 
     if (

@@ -26,8 +26,6 @@ import hu.bme.mit.theta.core.type.booltype.BoolType
 import hu.bme.mit.theta.core.utils.ExprUtils
 import hu.bme.mit.theta.core.utils.StmtUtils
 import hu.bme.mit.theta.xcfa.model.*
-import java.util.function.Predicate
-import kotlin.collections.plus
 
 fun XCFA.collectVars(): Iterable<VarDecl<*>> =
   globalVars.map { it.wrappedVar } union procedures.map { it.vars }.flatten()
@@ -184,44 +182,55 @@ fun XcfaLabel.collectGlobalVars(globalVars: Set<XcfaGlobalVar>): GlobalVarAccess
     }
     .toMap()
 
+/** See [collectIndirectItemAccesses] for global variables. */
+fun XcfaEdge.collectIndirectGlobalVarAccesses(xcfa: XCFA): GlobalVarAccessMap =
+  collectIndirectItemAccesses {
+    it.collectGlobalVars(xcfa.globalVars)
+  }
+
+/** See [collectIndirectItemAccesses] for memory locations. */
+fun XcfaEdge.collectIndirectMemoryAccesses(): DereferenceAccessMap = collectIndirectItemAccesses {
+  it.dereferencesWithAccessType
+}
+
 /**
- * Returns the global variables (potentially indirectly) accessed by the edge. If the edge starts an
- * atomic block, all variable accesses in the atomic block are returned. Variables are associated
- * with a pair of boolean values: the first is true if the variable is read and false otherwise. The
- * second is similar for write access.
+ * Returns the global items (global variables/memory locations) accessed by the edge. If the edge
+ * acquires a mutex, all variable accessed until any mutex is owned are returned. Variables are
+ * associated with a pair of boolean values: the first is true if the variable is read and false
+ * otherwise. The second is similar for write access.
  */
-fun XcfaEdge.collectIndirectGlobalVarAccesses(xcfa: XCFA): GlobalVarAccessMap {
-  val globalVars = xcfa.globalVars
-  val flatLabels = getFlatLabels()
+private fun <T> XcfaEdge.collectIndirectItemAccesses(
+  collectAccesses: (XcfaLabel) -> Map<T, AccessType>
+): Map<T, AccessType> {
   val mutexes =
-    flatLabels.filterIsInstance<FenceLabel>().flatMap { it.acquiredMutexes }.toMutableSet()
+    getFlatLabels().filterIsInstance<FenceLabel>().flatMap { it.acquiredMutexes }.toMutableSet()
   return if (mutexes.isEmpty()) {
-    label.collectGlobalVars(globalVars)
+    collectAccesses(label)
   } else {
-    collectGlobalVarsWithTraversal(globalVars) { it.mutexOperations(mutexes) }
+    collectGlobalItemsWithTraversal(collectAccesses) { it.mutexOperations(mutexes) }
   }
 }
 
 /**
- * Returns global variables encountered in a search starting from the edge.
+ * Returns global items (variables/memory locations) encountered in a search starting from the edge.
  *
  * @param goFurther the predicate that tells whether more edges have to be explored through an edge
  * @return the set of encountered shared objects
  */
-private fun XcfaEdge.collectGlobalVarsWithTraversal(
-  globalVars: Set<XcfaGlobalVar>,
-  goFurther: Predicate<XcfaEdge>,
-): GlobalVarAccessMap {
-  val vars = mutableMapOf<XcfaGlobalVar, AccessType>()
+private fun <T> XcfaEdge.collectGlobalItemsWithTraversal(
+  collectAccesses: (XcfaLabel) -> Map<T, AccessType>,
+  goFurther: (XcfaEdge) -> Boolean,
+): Map<T, AccessType> {
+  val vars = mutableMapOf<T, AccessType>()
   val exploredEdges = mutableListOf<XcfaEdge>()
   val edgesToExplore = mutableListOf<XcfaEdge>()
   edgesToExplore.add(this)
   while (edgesToExplore.isNotEmpty()) {
     val exploring = edgesToExplore.removeFirst()
-    exploring.label.collectGlobalVars(globalVars).forEach { (varDecl, access) ->
-      vars[varDecl] = vars[varDecl].merge(access)
+    collectAccesses(exploring.label).forEach { (item, access) ->
+      vars[item] = vars[item].merge(access)
     }
-    if (goFurther.test(exploring)) {
+    if (goFurther(exploring)) {
       for (newEdge in exploring.target.outgoingEdges) {
         if (newEdge !in exploredEdges) {
           edgesToExplore.add(newEdge)
