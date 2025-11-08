@@ -29,6 +29,7 @@ import hu.bme.mit.theta.core.stmt.AssignStmt
 import hu.bme.mit.theta.core.stmt.AssumeStmt
 import hu.bme.mit.theta.core.stmt.HavocStmt
 import hu.bme.mit.theta.core.stmt.MemoryAssignStmt
+import hu.bme.mit.theta.core.stmt.SkipStmt
 import hu.bme.mit.theta.core.stmt.Stmts.Assign
 import hu.bme.mit.theta.core.type.Expr
 import hu.bme.mit.theta.core.type.Type
@@ -275,6 +276,7 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
                   is AssumeStmt -> stmt.process(assumeConsts, firstLabel)
                   is HavocStmt<*> -> stmt.process()
                   is MemoryAssignStmt<*, *, *> -> stmt.process()
+                  is SkipStmt -> {}
                   else -> exit("unknown statement type: $stmt")
                 }
               }
@@ -378,9 +380,13 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
 
       // assign parameter
       val consts = this.params[1].toEvents()
-      val arg = procedure.params.first { it.second != ParamDirection.OUT }.first
-      last = event(arg, WRITE, newPid)
-      last.first().assignment = Eq(last.first().const.ref, this.params[1].with(consts))
+      procedure.params
+        .firstOrNull { it.second != ParamDirection.OUT }
+        ?.first
+        ?.let { arg ->
+          last = event(arg, WRITE, newPid)
+          last.first().assignment = Eq(last.first().const.ref, this.params[1].with(consts))
+        }
 
       last = event(this.pidVar, WRITE)
       val pidVar = this.pidVar.threadVar(pid)

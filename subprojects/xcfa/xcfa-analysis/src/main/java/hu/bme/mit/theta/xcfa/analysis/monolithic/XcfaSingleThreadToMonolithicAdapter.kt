@@ -31,7 +31,6 @@ import hu.bme.mit.theta.core.stmt.AssignStmt
 import hu.bme.mit.theta.core.stmt.AssumeStmt
 import hu.bme.mit.theta.core.stmt.NonDetStmt
 import hu.bme.mit.theta.core.stmt.SequenceStmt
-import hu.bme.mit.theta.core.stmt.Stmt
 import hu.bme.mit.theta.core.type.Type
 import hu.bme.mit.theta.core.type.abstracttype.AbstractExprs.Eq
 import hu.bme.mit.theta.core.type.abstracttype.AbstractExprs.Neq
@@ -42,6 +41,7 @@ import hu.bme.mit.theta.core.utils.StmtUtils
 import hu.bme.mit.theta.core.utils.TypeUtils.cast
 import hu.bme.mit.theta.core.utils.indexings.VarIndexingFactory
 import hu.bme.mit.theta.frontend.ParseContext
+import hu.bme.mit.theta.xcfa.ErrorDetection
 import hu.bme.mit.theta.xcfa.analysis.XcfaAction
 import hu.bme.mit.theta.xcfa.analysis.XcfaState
 import hu.bme.mit.theta.xcfa.analysis.proof.LocationInvariants
@@ -49,14 +49,23 @@ import hu.bme.mit.theta.xcfa.model.StmtLabel
 import hu.bme.mit.theta.xcfa.model.XCFA
 import hu.bme.mit.theta.xcfa.model.XcfaEdge
 import hu.bme.mit.theta.xcfa.model.XcfaLocation
+import hu.bme.mit.theta.xcfa.passes.DereferenceToArrayPass
+import hu.bme.mit.theta.xcfa.passes.ProcedurePassManager
 import hu.bme.mit.theta.xcfa.utils.getFlatLabels
-import kotlin.jvm.optionals.getOrNull
 
 class XcfaSingleThreadToMonolithicAdapter(
-  override val model: XCFA,
+  model: XCFA,
+  property: ErrorDetection,
   parseContext: ParseContext,
-  private val initValues: Boolean = false,
-) : XcfaToMonolithicAdapter(model, parseContext) {
+  initValues: Boolean = false,
+) :
+  XcfaToMonolithicAdapter(
+    model,
+    property,
+    ProcedurePassManager(listOf(DereferenceToArrayPass())),
+    parseContext,
+    initValues,
+  ) {
 
   private lateinit var locVar: VarDecl<Type>
   private val edgeVar = Decls.Var("__edge_", intType)
@@ -80,29 +89,29 @@ class XcfaSingleThreadToMonolithicAdapter(
 
       // Build transition list
       val tranList =
-        proc.edges
-          .map { edge: XcfaEdge ->
-            val (source, target, label) = edge
-            SequenceStmt.of(
-              listOf(
-                AssumeStmt.of(Eq(locVar.ref, smtInt(locationMap[source]!!))),
-                label.toStmt(),
-                AssignStmt.of(locVar, cast(smtInt(locationMap[target]!!), locVar.type)),
-                AssignStmt.of(edgeVar, cast(smtInt(edgeMap[edge]!!), edgeVar.type)),
-              )
-            )
-          }
-          .toList() +
-          (proc.errorLoc.getOrNull()?.let { errorLoc ->
+        proc.edges.map { edge: XcfaEdge ->
+          val (source, target, label) = edge
+          SequenceStmt.of(
             listOf(
-              SequenceStmt.of(
-                listOf(
-                  AssumeStmt.of(Eq(locVar.ref, smtInt(locationMap[errorLoc]!!))),
-                  AssignStmt.of(locVar, cast(smtInt(locationMap[errorLoc]!!), locVar.type)),
+              AssumeStmt.of(Eq(locVar.ref, smtInt(locationMap[source]!!))),
+              label.toStmt(),
+              AssignStmt.of(locVar, cast(smtInt(locationMap[target]!!), locVar.type)),
+              AssignStmt.of(edgeVar, cast(smtInt(edgeMap[edge]!!), edgeVar.type)),
+            )
+          )
+        } +
+          if (property != ErrorDetection.TERMINATION && proc.errorLoc.isPresent)
+            proc.errorLoc.get().let { errorLoc ->
+              listOf(
+                SequenceStmt.of(
+                  listOf(
+                    AssumeStmt.of(Eq(locVar.ref, smtInt(locationMap[errorLoc]!!))),
+                    AssignStmt.of(locVar, cast(smtInt(locationMap[errorLoc]!!), locVar.type)),
+                  )
                 )
               )
-            )
-          } ?: emptyList<Stmt>())
+            }
+          else listOf()
       val trans = NonDetStmt.of(tranList)
       val transUnfold = StmtUtils.toExpr(trans, VarIndexingFactory.indexing(0))
 
@@ -119,8 +128,11 @@ class XcfaSingleThreadToMonolithicAdapter(
           ),
         transExpr = And(transUnfold.exprs),
         propExpr =
-          if (proc.errorLoc.isPresent) Neq(locVar.ref, smtInt(locationMap[proc.errorLoc.get()]!!))
-          else True(),
+          when {
+            property == ErrorDetection.TERMINATION -> model.initProcedures[0].first.prop
+            proc.errorLoc.isPresent -> Neq(locVar.ref, smtInt(locationMap[proc.errorLoc.get()]!!))
+            else -> True()
+          },
         transOffsetIndex = transUnfold.indexing,
         vars = StmtUtils.getVars(trans).toList(),
         ctrlVars = listOf(locVar, edgeVar),

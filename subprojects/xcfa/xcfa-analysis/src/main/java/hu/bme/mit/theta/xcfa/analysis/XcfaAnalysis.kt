@@ -443,7 +443,7 @@ private fun getExplPredCombinedXcfaInitFunc(
   }
 }
 
-public fun getExplPredStmtXcfaTransFunc(
+fun getExplPredStmtXcfaTransFunc(
   solver: Solver,
   isHavoc: Boolean,
 ): (
@@ -467,7 +467,7 @@ public fun getExplPredStmtXcfaTransFunc(
   }
 }
 
-public fun getExplPredSplitXcfaTransFunc(
+fun getExplPredSplitXcfaTransFunc(
   prod2ExplPredAbstractor: Prod2ExplPredAbstractors.Prod2ExplPredAbstractor,
   isHavoc: Boolean,
 ): (
