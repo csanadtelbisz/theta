@@ -56,6 +56,8 @@ private class XcfaActionWrapper(val action: XcfaAction) {
   val pid = action.pid
   val edge = action.edge
 
+  override fun toString(): String = "$pid: ${edge.label}"
+
   override fun equals(other: Any?): Boolean {
     if (this === other) return true
     if (other !is XcfaActionWrapper) return false
@@ -169,6 +171,8 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
 
     override fun toString() = action.toString()
   }
+
+  private val spor = XcfaSporLts(xcfa)
 
   private val stack: Stack<StackItem> = Stack() // the DFS search stack
 
@@ -356,7 +360,7 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
                   this.add(enabledActions.random(random))
                 }
               } // for LAZY pruning
-            enabledActions.isNotEmpty() -> mutableSetOf(enabledActions.random(random))
+            enabledActions.isNotEmpty() -> mutableSetOf(AW(spor.getEnabledActionsFor(item.state).random(random)))
             else -> mutableSetOf()
           }
 

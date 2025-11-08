@@ -308,7 +308,12 @@ constructor(
   }
 
   override fun toString(): String {
-    return "[${number}] $processes {$sGlobal, mutex=$mutexes${if (bottom) ", bottom" else ""}}"
+    return "${
+      try {
+        "[$number] "
+      } catch (_: Exception) {
+      }
+    }$processes {$sGlobal, mutex=$mutexes${if (bottom) ", bottom" else ""}}"
   }
 }
 
