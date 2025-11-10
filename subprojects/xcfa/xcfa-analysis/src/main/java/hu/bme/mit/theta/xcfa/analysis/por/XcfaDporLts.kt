@@ -22,7 +22,6 @@ import hu.bme.mit.theta.analysis.State
 import hu.bme.mit.theta.analysis.algorithm.arg.ArgNode
 import hu.bme.mit.theta.analysis.expl.ExplState
 import hu.bme.mit.theta.analysis.expr.ExprState
-import hu.bme.mit.theta.analysis.ptr.PtrState
 import hu.bme.mit.theta.analysis.waitlist.Waitlist
 import hu.bme.mit.theta.core.model.ImmutableValuation
 import hu.bme.mit.theta.core.type.Expr
@@ -35,7 +34,6 @@ import hu.bme.mit.theta.solver.Solver
 import hu.bme.mit.theta.solver.utils.WithPushPop
 import hu.bme.mit.theta.solver.z3.Z3SolverFactory
 import hu.bme.mit.theta.xcfa.analysis.XcfaAction
-import hu.bme.mit.theta.xcfa.analysis.XcfaState
 import hu.bme.mit.theta.xcfa.analysis.getXcfaLts
 import hu.bme.mit.theta.xcfa.model.AtomicFenceLabel.Companion.ATOMIC_MUTEX
 import hu.bme.mit.theta.xcfa.model.FenceLabel
@@ -73,11 +71,7 @@ private class XcfaActionWrapper(val action: XcfaAction) {
   }
 }
 
-/** Type definitions for states, actions and ARG nodes. */
-private typealias S = XcfaState<out PtrState<out ExprState>>
-
-private typealias A = XcfaAction
-
+/** Type definitions for action wrappers and ARG nodes. */
 private typealias AW = XcfaActionWrapper
 
 private typealias Node = ArgNode<out S, XcfaAction>
@@ -114,7 +108,7 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
 
   companion object {
 
-    var random: Random = Random(0) // Random.Default
+    var random: Random = Random.Default
 
     private val dependencySolver: Solver by lazy { Z3SolverFactory.getInstance().createSolver() }
 
@@ -360,7 +354,11 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
                   this.add(enabledActions.random(random))
                 }
               } // for LAZY pruning
-            enabledActions.isNotEmpty() -> mutableSetOf(AW(spor.getEnabledActionsFor(item.state).random(random)))
+            enabledActions.isNotEmpty() -> {
+              val sporSuggestion =
+                sporSuggestion(item.state, enabledActions.map { it.action.pid }).map { AW(it) }
+              mutableSetOf((sporSuggestion intersect enabledActions).random(random))
+            }
             else -> mutableSetOf()
           }
 
@@ -562,6 +560,9 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
         stateBeforeEarlier.mutexes[mutex.name]?.contains(earlier.pid) == true
       }
     }
+
+  protected open fun sporSuggestion(state: S, startFromPids: Collection<Int>): Set<A> =
+    spor.getEnabledActions(state, startFromPids.toSet())
 }
 
 /**
@@ -570,7 +571,9 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
 class XcfaAadporLts(override val xcfa: XCFA) : XcfaDporLts(xcfa) {
 
   /** The current precision of the abstraction. */
-  private var prec: Prec? = null
+  private lateinit var prec: Prec
+
+  private val aaspor = XcfaAasporLts(xcfa, mutableMapOf())
 
   /** Returns actions to be explored from the given state considering the given precision. */
   override fun <P : Prec> getEnabledActionsFor(
@@ -584,7 +587,7 @@ class XcfaAadporLts(override val xcfa: XCFA) : XcfaDporLts(xcfa) {
 
   /** Returns true if a and b are dependent actions in the current abstraction. */
   override fun dependentGlobalVar(a: A, b: A): Boolean {
-    val precVars = prec?.usedVars?.toSet() ?: return super.dependentGlobalVar(a, b)
+    val precVars = prec.usedVars.toSet()
     val aGlobalVars = a.edge.collectIndirectGlobalVarAccesses(xcfa)
     val bGlobalVars = b.edge.collectIndirectGlobalVarAccesses(xcfa)
     // dependent if they access the same variable in the precision (at least one write)
@@ -592,4 +595,7 @@ class XcfaAadporLts(override val xcfa: XCFA) : XcfaDporLts(xcfa) {
       aGlobalVars[it].isWritten || bGlobalVars[it].isWritten
     }
   }
+
+  override fun sporSuggestion(state: S, startFromPids: Collection<Int>): Set<A> =
+    aaspor.getEnabledActions(state, listOf(), prec, startFromPids.toSet())
 }

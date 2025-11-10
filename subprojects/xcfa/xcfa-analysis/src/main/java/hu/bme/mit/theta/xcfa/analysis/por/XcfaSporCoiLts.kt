@@ -17,32 +17,22 @@ package hu.bme.mit.theta.xcfa.analysis.por
 
 import hu.bme.mit.theta.analysis.LTS
 import hu.bme.mit.theta.analysis.Prec
-import hu.bme.mit.theta.analysis.expr.ExprState
-import hu.bme.mit.theta.analysis.ptr.PtrState
-import hu.bme.mit.theta.xcfa.analysis.XcfaAction
-import hu.bme.mit.theta.xcfa.analysis.XcfaState
 import hu.bme.mit.theta.xcfa.analysis.coi.transFuncVersion
 import hu.bme.mit.theta.xcfa.model.XCFA
 import hu.bme.mit.theta.xcfa.model.XcfaEdge
 
-class XcfaSporCoiLts(xcfa: XCFA, coiLTS: LTS<XcfaState<out PtrState<out ExprState>>, XcfaAction>) :
-  XcfaSporLts(xcfa) {
+class XcfaSporCoiLts(xcfa: XCFA, coiLTS: LTS<S, A>) : XcfaSporLts(xcfa) {
 
   init {
     simpleXcfaLts = coiLTS
   }
 
-  override fun <P : Prec?> getEnabledActionsFor(
-    state: XcfaState<out PtrState<*>>,
-    exploredActions: Collection<XcfaAction>,
+  override fun <P : Prec> getEnabledActionsFor(
+    state: S,
+    exploredActions: Collection<A>,
     prec: P,
-  ): Set<XcfaAction> {
-    return getEnabledActionsFor(
-      state,
-      simpleXcfaLts.getEnabledActionsFor(state, exploredActions, prec),
-    )
-  }
+  ): Set<A> =
+    getEnabledActions(state, simpleXcfaLts.getEnabledActionsFor(state, exploredActions, prec))
 
-  override fun getEdge(action: XcfaAction): XcfaEdge =
-    super.getEdge(action.transFuncVersion ?: action)
+  override fun getEdge(action: A): XcfaEdge = super.getEdge(action.transFuncVersion ?: action)
 }

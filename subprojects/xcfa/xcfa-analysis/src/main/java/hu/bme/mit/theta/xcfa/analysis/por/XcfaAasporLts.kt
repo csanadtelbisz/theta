@@ -17,10 +17,7 @@ package hu.bme.mit.theta.xcfa.analysis.por
 
 import hu.bme.mit.theta.analysis.Prec
 import hu.bme.mit.theta.analysis.expr.ExprState
-import hu.bme.mit.theta.analysis.ptr.PtrState
 import hu.bme.mit.theta.core.decl.VarDecl
-import hu.bme.mit.theta.xcfa.analysis.XcfaAction
-import hu.bme.mit.theta.xcfa.analysis.XcfaState
 import hu.bme.mit.theta.xcfa.model.XCFA
 
 open class XcfaAasporLts(
@@ -29,20 +26,27 @@ open class XcfaAasporLts(
 ) : XcfaSporLts(xcfa) {
 
   override fun <P : Prec> getEnabledActionsFor(
-    state: XcfaState<out PtrState<*>>,
-    exploredActions: Collection<XcfaAction>,
+    state: S,
+    exploredActions: Collection<A>,
     prec: P,
-  ): Set<XcfaAction> {
+  ): Set<A> = getEnabledActions(state, exploredActions, prec)
+
+  internal fun <P : Prec> getEnabledActions(
+    state: S,
+    exploredActions: Collection<A>,
+    prec: P,
+    startFromPids: Set<Int>? = null,
+  ): Set<A> {
     // Collecting enabled actions
     val allEnabledActions = simpleXcfaLts.getEnabledActionsFor(state, exploredActions, prec)
 
     // Calculating the source set starting from every (or some of the) enabled transition or from
     // exploredActions if it is not empty
     // The minimal source set is stored
-    var minimalSourceSet = mutableSetOf<XcfaAction>()
+    var minimalSourceSet = mutableSetOf<A>()
     val sourceSetFirstActions =
       if (exploredActions.isEmpty()) {
-        getSourceSetFirstActions(state, allEnabledActions)
+        getSourceSetFirstActions(state, allEnabledActions, startFromPids)
       } else {
         setOf(exploredActions)
       }
@@ -80,12 +84,12 @@ open class XcfaAasporLts(
    * @return a source set of enabled actions in the current abstraction
    */
   private fun calculateSourceSet(
-    state: XcfaState<out PtrState<out ExprState>>,
-    enabledActions: Collection<XcfaAction>,
-    firstActions: Collection<XcfaAction>,
+    state: S,
+    enabledActions: Collection<A>,
+    firstActions: Collection<A>,
     prec: Prec,
     ignoredVars: MutableSet<VarDecl<*>>,
-  ): Set<XcfaAction> {
+  ): Set<A> {
     if (firstActions.any { it.isBackward }) {
       return enabledActions.toSet()
     }
@@ -98,7 +102,7 @@ open class XcfaAasporLts(
     var addedNewAction = true
     while (addedNewAction) {
       addedNewAction = false
-      val actionsToRemove = mutableSetOf<XcfaAction>()
+      val actionsToRemove = mutableSetOf<A>()
       for (action in otherActions) {
         // for every action that is not in the source set it is checked whether it should be added
         // to the source set
@@ -125,9 +129,9 @@ open class XcfaAasporLts(
   }
 
   private fun areDependents(
-    state: XcfaState<out PtrState<out ExprState>>,
-    sourceSetAction: XcfaAction,
-    action: XcfaAction,
+    state: S,
+    sourceSetAction: A,
+    action: A,
     prec: Prec,
     ignoredVariables: MutableSet<VarDecl<*>>,
   ): Boolean {

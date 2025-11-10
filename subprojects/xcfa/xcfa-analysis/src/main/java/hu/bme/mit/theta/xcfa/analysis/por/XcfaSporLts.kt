@@ -17,8 +17,6 @@ package hu.bme.mit.theta.xcfa.analysis.por
 
 import hu.bme.mit.theta.analysis.LTS
 import hu.bme.mit.theta.analysis.expl.ExplState
-import hu.bme.mit.theta.analysis.expr.ExprState
-import hu.bme.mit.theta.analysis.ptr.PtrState
 import hu.bme.mit.theta.core.decl.VarDecl
 import hu.bme.mit.theta.core.type.Expr
 import hu.bme.mit.theta.core.type.LitExpr
@@ -30,8 +28,6 @@ import hu.bme.mit.theta.core.utils.PathUtils
 import hu.bme.mit.theta.solver.Solver
 import hu.bme.mit.theta.solver.utils.WithPushPop
 import hu.bme.mit.theta.solver.z3.Z3SolverFactory
-import hu.bme.mit.theta.xcfa.analysis.XcfaAction
-import hu.bme.mit.theta.xcfa.analysis.XcfaState
 import hu.bme.mit.theta.xcfa.analysis.getXcfaLts
 import hu.bme.mit.theta.xcfa.model.*
 import hu.bme.mit.theta.xcfa.utils.*
@@ -39,7 +35,7 @@ import java.util.*
 import java.util.function.Predicate
 import kotlin.random.Random
 
-typealias MemLoc = Pair<Expr<*>, Expr<*>>
+internal typealias MemLoc = Pair<Expr<*>, Expr<*>>
 
 internal fun MemLoc.isLit() = first is LitExpr<*> && second is LitExpr<*>
 
@@ -51,8 +47,7 @@ internal fun MemLoc.isLit() = first is LitExpr<*> && second is LitExpr<*>
  *
  * @param xcfa the XCFA of the verified program
  */
-open class XcfaSporLts(protected val xcfa: XCFA) :
-  LTS<XcfaState<out PtrState<out ExprState>>, XcfaAction> {
+open class XcfaSporLts(protected val xcfa: XCFA) : LTS<S, A> {
 
   companion object {
 
@@ -92,20 +87,37 @@ open class XcfaSporLts(protected val xcfa: XCFA) :
    * @param state the state whose enabled actions we would like to know
    * @return the enabled actions
    */
-  override fun getEnabledActionsFor(
-    state: XcfaState<out PtrState<out ExprState>>
-  ): Set<XcfaAction> = getEnabledActionsFor(state, simpleXcfaLts.getEnabledActionsFor(state))
+  override fun getEnabledActionsFor(state: S): Set<A> = getEnabledActions(state)
 
   /**
    * Calculates the source set starting from every (or some of the) enabled transition; the minimal
    * source set is returned.
+   *
+   * @param state the current state
+   * @param startFromPids if given, only source sets starting from actions belonging to these pids
+   *   are calculated (and the minimal among them is returned)
+   * @return the minimal source set in the current state
    */
-  protected open fun getEnabledActionsFor(
-    state: XcfaState<out PtrState<out ExprState>>,
-    allEnabledActions: Collection<XcfaAction>,
-  ): Set<XcfaAction> {
-    var minimalSourceSet = setOf<XcfaAction>()
-    val sourceSetFirstActions = getSourceSetFirstActions(state, allEnabledActions)
+  internal fun getEnabledActions(state: S, startFromPids: Set<Int>? = null): Set<A> =
+    getEnabledActions(state, simpleXcfaLts.getEnabledActionsFor(state), startFromPids)
+
+  /**
+   * Calculates the source set starting from every (or some of the) enabled transition; the minimal
+   * source set is returned.
+   *
+   * @param state the current state
+   * @param allEnabledActions the enabled actions in the present state
+   * @param startFromPids if given, only source sets starting from actions belonging to these pids
+   *   are calculated (and the minimal among them is returned)
+   * @return the minimal source set in the current state
+   */
+  protected fun getEnabledActions(
+    state: S,
+    allEnabledActions: Collection<A>,
+    startFromPids: Set<Int>? = null,
+  ): Set<A> {
+    var minimalSourceSet = setOf<A>()
+    val sourceSetFirstActions = getSourceSetFirstActions(state, allEnabledActions, startFromPids)
     for (firstActions in sourceSetFirstActions) {
       val sourceSet = calculateSourceSet(state, allEnabledActions, firstActions)
       if (minimalSourceSet.isEmpty() || sourceSet.size < minimalSourceSet.size) {
@@ -122,16 +134,19 @@ open class XcfaSporLts(protected val xcfa: XCFA) :
    * @return the possible starting actions of a source set
    */
   protected fun getSourceSetFirstActions(
-    state: XcfaState<out PtrState<out ExprState>>,
-    allEnabledActions: Collection<XcfaAction>,
-  ): Collection<Collection<XcfaAction>> {
-    val enabledActionsByProcess = allEnabledActions.groupBy(XcfaAction::pid)
+    state: S,
+    allEnabledActions: Collection<A>,
+    startFromPids: Set<Int>? = null,
+  ): Collection<Collection<A>> {
+    val enabledActionsByProcess = allEnabledActions.groupBy(A::pid)
     val enabledProcesses = enabledActionsByProcess.keys.toList().shuffled(random)
-    return enabledProcesses.map { pid ->
-      val firstProcesses = mutableSetOf(pid)
-      checkMutexBlocks(state, pid, firstProcesses, enabledActionsByProcess)
-      firstProcesses.flatMap { enabledActionsByProcess[it] ?: emptyList() }
-    }
+    return enabledProcesses
+      .filter { startFromPids?.contains(it) == true }
+      .map { pid ->
+        val firstProcesses = mutableSetOf(pid)
+        checkMutexBlocks(state, pid, firstProcesses, enabledActionsByProcess)
+        firstProcesses.flatMap { enabledActionsByProcess[it] ?: emptyList() }
+      }
   }
 
   /**
@@ -145,10 +160,10 @@ open class XcfaSporLts(protected val xcfa: XCFA) :
    * @return the set of first processes
    */
   private fun checkMutexBlocks(
-    state: XcfaState<out PtrState<out ExprState>>,
+    state: S,
     pid: Int,
     firstProcesses: MutableSet<Int>,
-    enabledActionsByProcess: Map<Int, List<XcfaAction>>,
+    enabledActionsByProcess: Map<Int, List<A>>,
   ) {
     val processState = state.processes[pid]!!
     if (!processState.paramsInitialized) return
@@ -178,10 +193,10 @@ open class XcfaSporLts(protected val xcfa: XCFA) :
    * @return a source set of enabled actions
    */
   private fun calculateSourceSet(
-    state: XcfaState<out PtrState<out ExprState>>,
-    enabledActions: Collection<XcfaAction>,
-    firstActions: Collection<XcfaAction>,
-  ): Set<XcfaAction> {
+    state: S,
+    enabledActions: Collection<A>,
+    firstActions: Collection<A>,
+  ): Set<A> {
     if (firstActions.any { it.isBackward }) {
       return enabledActions.toSet()
     }
@@ -192,7 +207,7 @@ open class XcfaSporLts(protected val xcfa: XCFA) :
     var addedNewAction = true
     while (addedNewAction) {
       addedNewAction = false
-      val actionsToRemove = mutableSetOf<XcfaAction>()
+      val actionsToRemove = mutableSetOf<A>()
       for (action in otherActions) {
         // for every action that is not in the source set it is checked whether it should be added
         // to the source set
@@ -220,11 +235,7 @@ open class XcfaSporLts(protected val xcfa: XCFA) :
    * @param action the other action (not in the source set)
    * @return true, if the two actions are dependent in the context of source sets
    */
-  private fun dependent(
-    state: XcfaState<out PtrState<out ExprState>>,
-    sourceSetAction: XcfaAction,
-    action: XcfaAction,
-  ): Boolean {
+  private fun dependent(state: S, sourceSetAction: A, action: A): Boolean {
     if (sourceSetAction.pid == action.pid) return true
 
     val sourceSetActionVars = getCachedUsedVars(getEdge(sourceSetAction))
@@ -249,8 +260,8 @@ open class XcfaSporLts(protected val xcfa: XCFA) :
    * well.
    */
   protected fun indirectlyDependent(
-    state: XcfaState<out PtrState<out ExprState>>,
-    sourceSetAction: XcfaAction,
+    state: S,
+    sourceSetAction: A,
     sourceSetMemLocs: Set<MemLoc>,
     inflMemLocs: Set<MemLoc>,
   ): Boolean {
@@ -480,7 +491,7 @@ open class XcfaSporLts(protected val xcfa: XCFA) :
    * @param action the action whose edge is to be returned
    * @return the edge of the action
    */
-  protected open fun getEdge(action: XcfaAction) = action.edge
+  protected open fun getEdge(action: A) = action.edge
 
   /**
    * Returns the outgoing edges of the target of the given edge. For start threads, the first edges
@@ -509,7 +520,7 @@ open class XcfaSporLts(protected val xcfa: XCFA) :
    *
    * @return true, if the action is a backward action
    */
-  protected open val XcfaAction.isBackward: Boolean
+  protected open val A.isBackward: Boolean
     get() = backwardEdges.any { it.first == source && it.second == target }
 
   /** Collects backward edges of the given XCFA. */

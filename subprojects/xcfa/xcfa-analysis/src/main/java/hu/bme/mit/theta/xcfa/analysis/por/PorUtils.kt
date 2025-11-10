@@ -15,22 +15,12 @@
  */
 package hu.bme.mit.theta.xcfa.analysis.por
 
-import hu.bme.mit.theta.analysis.LTS
 import hu.bme.mit.theta.analysis.expr.ExprState
-import hu.bme.mit.theta.core.decl.VarDecl
-import hu.bme.mit.theta.xcfa.analysis.coi.transFuncVersion
-import hu.bme.mit.theta.xcfa.model.XCFA
-import hu.bme.mit.theta.xcfa.model.XcfaEdge
+import hu.bme.mit.theta.analysis.ptr.PtrState
+import hu.bme.mit.theta.xcfa.analysis.XcfaAction
+import hu.bme.mit.theta.xcfa.analysis.XcfaState
 
-class XcfaAasporCoiLts(
-  xcfa: XCFA,
-  ignoredVarRegistry: MutableMap<VarDecl<*>, MutableSet<ExprState>>,
-  coiLTS: LTS<S, A>,
-) : XcfaAasporLts(xcfa, ignoredVarRegistry) {
+/** Type definitions for states, actions */
+internal typealias S = XcfaState<out PtrState<out ExprState>>
 
-  init {
-    simpleXcfaLts = coiLTS
-  }
-
-  override fun getEdge(action: A): XcfaEdge = super.getEdge(action.transFuncVersion ?: action)
-}
+internal typealias A = XcfaAction
