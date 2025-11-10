@@ -166,7 +166,7 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
     override fun toString() = action.toString()
   }
 
-  private val spor = XcfaSporLts(xcfa)
+  protected open val spor = XcfaSporLts(xcfa)
 
   private val stack: Stack<StackItem> = Stack() // the DFS search stack
 
@@ -568,12 +568,12 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
 /**
  * Abstraction-aware dynamic partial order reduction (AADPOR) algorithm for state space exploration.
  */
-class XcfaAadporLts(override val xcfa: XCFA) : XcfaDporLts(xcfa) {
+class XcfaAadporLts(xcfa: XCFA) : XcfaDporLts(xcfa) {
 
   /** The current precision of the abstraction. */
   private lateinit var prec: Prec
 
-  private val aaspor = XcfaAasporLts(xcfa, mutableMapOf())
+  override val spor = XcfaAasporLts(xcfa, mutableMapOf())
 
   /** Returns actions to be explored from the given state considering the given precision. */
   override fun <P : Prec> getEnabledActionsFor(
@@ -591,11 +591,11 @@ class XcfaAadporLts(override val xcfa: XCFA) : XcfaDporLts(xcfa) {
     val aGlobalVars = a.edge.collectIndirectGlobalVarAccesses(xcfa)
     val bGlobalVars = b.edge.collectIndirectGlobalVarAccesses(xcfa)
     // dependent if they access the same variable in the precision (at least one write)
-    return (aGlobalVars.keys intersect bGlobalVars.keys intersect precVars).any {
-      aGlobalVars[it].isWritten || bGlobalVars[it].isWritten
+    return (aGlobalVars.keys intersect bGlobalVars.keys).any {
+      (aGlobalVars[it].isWritten || bGlobalVars[it].isWritten) && it.wrappedVar in precVars
     }
   }
 
   override fun sporSuggestion(state: S, startFromPids: Collection<Int>): Set<A> =
-    aaspor.getEnabledActions(state, listOf(), prec, startFromPids.toSet())
+    spor.getEnabledActions(state, listOf(), prec, startFromPids.toSet())
 }
