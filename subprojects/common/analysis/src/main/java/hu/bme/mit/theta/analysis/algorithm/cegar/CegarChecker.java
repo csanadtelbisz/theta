@@ -20,9 +20,11 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import com.google.common.base.Stopwatch;
 import hu.bme.mit.theta.analysis.Cex;
 import hu.bme.mit.theta.analysis.Prec;
+import hu.bme.mit.theta.analysis.algorithm.PorLogger;
 import hu.bme.mit.theta.analysis.algorithm.Proof;
 import hu.bme.mit.theta.analysis.algorithm.SafetyChecker;
 import hu.bme.mit.theta.analysis.algorithm.SafetyResult;
+import hu.bme.mit.theta.analysis.algorithm.arg.ARG;
 import hu.bme.mit.theta.analysis.runtimemonitor.MonitorCheckpoint;
 import hu.bme.mit.theta.analysis.utils.ProofVisualizer;
 import hu.bme.mit.theta.common.Utils;
@@ -100,6 +102,8 @@ public final class CegarChecker<P extends Prec, Pr extends Proof, C extends Cex>
             logger.write(
                     Level.MAINSTEP, "| Checking abstraction done, result: %s%n", abstractorResult);
 
+            PorLogger.INSTANCE.getExploredActions().add(((ARG)proof).size());
+
             if (WebDebuggerLogger.enabled()) {
                 String argGraph =
                         JSONWriter.getInstance().writeString(proofVisualizer.visualize(proof));
@@ -156,6 +160,7 @@ public final class CegarChecker<P extends Prec, Pr extends Proof, C extends Cex>
         assert cegarResult != null;
         logger.write(Level.RESULT, "%s%n", cegarResult);
         logger.write(Level.INFO, "%s%n", stats);
+        PorLogger.INSTANCE.printStatistics();
         return cegarResult;
     }
 

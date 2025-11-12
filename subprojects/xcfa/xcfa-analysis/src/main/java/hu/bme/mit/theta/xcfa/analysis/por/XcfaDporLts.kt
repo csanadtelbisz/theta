@@ -19,6 +19,7 @@ import hu.bme.mit.theta.analysis.LTS
 import hu.bme.mit.theta.analysis.PartialOrd
 import hu.bme.mit.theta.analysis.Prec
 import hu.bme.mit.theta.analysis.State
+import hu.bme.mit.theta.analysis.algorithm.PorLogger
 import hu.bme.mit.theta.analysis.algorithm.arg.ArgNode
 import hu.bme.mit.theta.analysis.expl.ExplState
 import hu.bme.mit.theta.analysis.expr.ExprState
@@ -47,6 +48,7 @@ import java.util.stream.Collectors
 import java.util.stream.Stream
 import kotlin.math.max
 import kotlin.random.Random
+import kotlin.system.measureTimeMillis
 
 /** Wrapper class for actions to redefine equality and hash code based on pid and edge only. */
 private class XcfaActionWrapper(val action: XcfaAction) {
@@ -400,30 +402,32 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
 
       /** Virtually reexplores part of the ARG for race detection. Used when a node is covered. */
       private fun virtualExploration(node: Node, realStackSize: Int) {
-        val startStackSize = stack.size
-        val virtualStack = Stack<Node>()
-        virtualStack.push(node)
-        while (virtualStack.isNotEmpty()) {
-          val visiting = virtualStack.pop()
-          while (stack.size > startStackSize && stack.peek().node != visiting.parent.get()) {
-            stack.pop()
-          }
+        PorLogger.virtualExplorationTimeMs += measureTimeMillis {
+          val startStackSize = stack.size
+          val virtualStack = Stack<Node>()
+          virtualStack.push(node)
+          while (virtualStack.isNotEmpty()) {
+            val visiting = virtualStack.pop()
+            while (stack.size > startStackSize && stack.peek().node != visiting.parent.get()) {
+              stack.pop()
+            }
 
-          if (node != visiting) {
-            if (!push(visiting, startStackSize) || noInfluenceOnRealExploration(realStackSize))
-              continue
-          }
+            if (node != visiting) {
+              if (!push(visiting, startStackSize) || noInfluenceOnRealExploration(realStackSize))
+                continue
+            }
 
-          // visiting is not on the stack: no cycle && further virtual exploration can influence
-          // real exploration
-          if (visiting.isCovered) {
-            val coveringNode = visiting.coveringNode.get()
-            virtualExploration(coveringNode, realStackSize)
-          } else {
-            visiting.outEdges.forEach { virtualStack.push(it.target) }
+            // visiting is not on the stack: no cycle && further virtual exploration can influence
+            // real exploration
+            if (visiting.isCovered) {
+              val coveringNode = visiting.coveringNode.get()
+              virtualExploration(coveringNode, realStackSize)
+            } else {
+              visiting.outEdges.forEach { virtualStack.push(it.target) }
+            }
           }
+          while (stack.size > startStackSize) stack.pop()
         }
-        while (stack.size > startStackSize) stack.pop()
       }
 
       /** Explores the part of the ARG preserved from previous iterations (see lazy pruning). */
@@ -496,10 +500,15 @@ open class XcfaDporLts(protected open val xcfa: XCFA) : LTS<S, A> {
     }
 
   /** Returns true if a and b are dependent actions. */
-  protected fun dependent(a: A, b: A, aSource: S? = null, bSource: S? = null): Boolean =
-    dependentControlFlow(a, b) ||
-      dependentGlobalVar(a, b) ||
-      dependentMemLoc(a, b, aSource, bSource)
+  protected fun dependent(a: A, b: A, aSource: S? = null, bSource: S? = null): Boolean {
+    val result: Boolean
+    PorLogger.dependentTimeMs += measureTimeMillis {
+      result = dependentControlFlow(a, b) ||
+        dependentGlobalVar(a, b) ||
+        dependentMemLoc(a, b, aSource, bSource)
+    }
+    return result
+  }
 
   protected fun dependentControlFlow(a: A, b: A): Boolean = a.pid == b.pid
 
