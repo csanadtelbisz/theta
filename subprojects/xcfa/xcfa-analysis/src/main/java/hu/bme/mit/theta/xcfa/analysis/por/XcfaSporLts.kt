@@ -141,7 +141,7 @@ open class XcfaSporLts(protected val xcfa: XCFA) : LTS<S, A> {
     val enabledActionsByProcess = allEnabledActions.groupBy(A::pid)
     val enabledProcesses = enabledActionsByProcess.keys.toList().shuffled(random)
     return enabledProcesses
-      .filter { startFromPids?.contains(it) == true }
+      .filter { startFromPids?.contains(it) != false }
       .map { pid ->
         val firstProcesses = mutableSetOf(pid)
         checkMutexBlocks(state, pid, firstProcesses, enabledActionsByProcess)
