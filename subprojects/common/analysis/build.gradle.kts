@@ -16,9 +16,11 @@
 plugins {
     id("java-common")
     id("kotlin-common")
+    id("tools.refinery.java")
 }
 
 dependencies {
+    implementation(refinery.generator)
     implementation(files(rootDir.resolve(Deps.delta)))
     implementation(files(rootDir.resolve(Deps.hoaf)))
     implementation(project(":theta-common"))
