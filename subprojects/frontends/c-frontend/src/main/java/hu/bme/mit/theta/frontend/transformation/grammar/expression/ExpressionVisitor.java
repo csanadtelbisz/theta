@@ -575,11 +575,14 @@ public class ExpressionVisitor extends IncludeHandlingCBaseVisitor<Expr<?>> {
                                                     .map(it -> (CComplexType) it))
                             .or(
                                     () ->
-                                            Optional.ofNullable(
-                                                    CComplexType.getType(
-                                                            getVar(ctx.typeName().getText())
-                                                                    .getRef(),
-                                                            parseContext)));
+                                    {
+                                      VarDecl<?> v = getVar(ctx.typeName().getText());
+                                      if (v == null) return Optional.empty();
+                                      return Optional.ofNullable(
+                                              CComplexType.getType(
+                                                      v.getRef(),
+                                                      parseContext));
+                                    });
 
             if (type.isPresent()) {
                 LitExpr<?> value =

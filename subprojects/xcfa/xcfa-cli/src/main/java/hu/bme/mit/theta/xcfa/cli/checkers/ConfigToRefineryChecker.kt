@@ -1,0 +1,58 @@
+/*
+ *  Copyright 2025 Budapest University of Technology and Economics
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ */
+package hu.bme.mit.theta.xcfa.cli.checkers
+
+import hu.bme.mit.theta.analysis.Trace
+import hu.bme.mit.theta.analysis.algorithm.SafetyChecker
+import hu.bme.mit.theta.analysis.algorithm.bounded.MonolithicExpr
+import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryChecker
+import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryProof
+import hu.bme.mit.theta.analysis.expl.ExplState
+import hu.bme.mit.theta.analysis.ptr.PtrState
+import hu.bme.mit.theta.analysis.unit.UnitPrec
+import hu.bme.mit.theta.common.logging.Logger
+import hu.bme.mit.theta.frontend.ParseContext
+import hu.bme.mit.theta.xcfa.analysis.XcfaAction
+import hu.bme.mit.theta.xcfa.analysis.XcfaState
+import hu.bme.mit.theta.xcfa.analysis.monolithic.XcfaPipelineChecker
+import hu.bme.mit.theta.xcfa.analysis.proof.LocationInvariants
+import hu.bme.mit.theta.xcfa.cli.params.XcfaConfig
+import hu.bme.mit.theta.xcfa.model.XCFA
+
+fun getRefineryChecker(
+  xcfa: XCFA,
+  parseContext: ParseContext,
+  config: XcfaConfig<*, *>,
+  logger: Logger,
+): SafetyChecker<LocationInvariants, Trace<XcfaState<PtrState<ExplState>>, XcfaAction>, UnitPrec> {
+  val baseChecker = { monolithicExpr: MonolithicExpr ->
+    RefineryChecker(
+      monolithicExpr,
+      logger,
+    )
+  }
+
+  return XcfaPipelineChecker(
+    xcfa,
+    config.inputConfig.property,
+    parseContext,
+    baseChecker,
+    mutableListOf(),
+    logger,
+    config.outputConfig.acceptUnreliableSafe,
+    true,
+  )
+}

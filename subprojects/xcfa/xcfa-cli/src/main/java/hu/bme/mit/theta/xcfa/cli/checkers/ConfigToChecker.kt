@@ -57,6 +57,7 @@ fun getSafetyChecker(
       Backend.PORTFOLIO ->
         getPortfolioChecker(xcfa, mcm, config, parseContext, logger, uniqueLogger)
       Backend.MDD -> getMddChecker(xcfa, parseContext, config, logger)
+      Backend.REFINERY -> getRefineryChecker(xcfa, parseContext, config, logger)
       Backend.NONE ->
         SafetyChecker<
           ARG<XcfaState<PtrState<*>>, XcfaAction>,

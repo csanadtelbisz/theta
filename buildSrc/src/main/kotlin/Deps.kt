@@ -27,6 +27,7 @@ private fun getOs(): String {
     }
 }
 
+@Suppress("MayBeConstant")
 object Deps {
 
     val guava = "com.google.guava:guava:${Versions.guava}"
@@ -59,6 +60,8 @@ object Deps {
         "org.sosy-lab:javasmt-yices2:4.1.1-734-g3732f7e08"
     )
     val eldarica = "io.github.uuverifiers:eldarica_2.13:${Versions.eldarica}"
+
+    val refinery = "tools.refinery:refinery-generator:${Versions.refinery}"
 
     val jcommander = "com.beust:jcommander:${Versions.jcommander}"
 

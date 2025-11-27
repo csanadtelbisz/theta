@@ -92,6 +92,7 @@ enum class Backend {
   PORTFOLIO,
   TRACEGEN,
   MDD,
+  REFINERY,
   IC3,
   NONE,
 }

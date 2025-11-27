@@ -240,6 +240,7 @@ data class BackendConfig<T : SpecBackendConfig>(
         Backend.PORTFOLIO -> PortfolioConfig() as T
         Backend.TRACEGEN -> TracegenConfig() as T
         Backend.MDD -> MddConfig() as T
+        Backend.REFINERY -> null
         Backend.NONE -> null
         Backend.IC3 -> Ic3Config() as T
       }

@@ -26,9 +26,9 @@ dependencies {
     implementation(Deps.Mockito.kotlin)
 }
 tasks {
-    withType<KotlinCompile>() {
+    withType<KotlinCompile> {
         kotlinOptions {
-            jvmTarget = "17"
+            jvmTarget = Versions.java
             freeCompilerArgs = listOf("-Xjvm-default=all-compatibility")
         }
     }

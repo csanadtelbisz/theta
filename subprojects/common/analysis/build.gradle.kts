@@ -16,11 +16,9 @@
 plugins {
     id("java-common")
     id("kotlin-common")
-    id("tools.refinery.java")
 }
 
 dependencies {
-    implementation(refinery.generator)
     implementation(files(rootDir.resolve(Deps.delta)))
     implementation(files(rootDir.resolve(Deps.hoaf)))
     implementation(project(":theta-common"))
@@ -30,6 +28,7 @@ dependencies {
     implementation(project(":theta-solver-javasmt"))
     implementation(project(":theta-solver-z3-legacy"))
     implementation(project(":theta-graph-solver"))
+    implementation(Deps.refinery)
     implementation(project(mapOf("path" to ":theta-solver-z3-legacy")))
     testImplementation(project(":theta-solver-z3-legacy"))
     testImplementation(project(":theta-solver-z3"))
