@@ -214,7 +214,7 @@ public class NamedType extends CSimpleType {
         if (isAtomic()) {
             stringBuilder.append("_Atomic ");
         }
-        if (!isSigned()) {
+        if (isSigned() != null && !isSigned()) {
             stringBuilder.append("unsigned ");
         }
         if (isShort()) {
