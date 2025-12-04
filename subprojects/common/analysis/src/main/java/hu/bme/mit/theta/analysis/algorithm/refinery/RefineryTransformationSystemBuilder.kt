@@ -242,7 +242,6 @@ abstract class RefineryTransitionRuleBuilder<T>(
 
             else -> error("Unsupported pointer assignment expression in RefineryRuleBuilder: $this")
           }
-          TODO()
         } else {
           variables.add(varDecl)
           val preConditionClauses = mutableListOf<String>()
