@@ -29,6 +29,7 @@ import hu.bme.mit.theta.xcfa.analysis.XcfaAction
 import hu.bme.mit.theta.xcfa.analysis.XcfaState
 import hu.bme.mit.theta.xcfa.analysis.monolithic.XcfaPipelineChecker
 import hu.bme.mit.theta.xcfa.analysis.proof.LocationInvariants
+import hu.bme.mit.theta.xcfa.analysis.refinery.XcfaRefineryTransitionSystemBuilder
 import hu.bme.mit.theta.xcfa.cli.params.XcfaConfig
 import hu.bme.mit.theta.xcfa.model.XCFA
 
@@ -38,21 +39,6 @@ fun getRefineryChecker(
   config: XcfaConfig<*, *>,
   logger: Logger,
 ): SafetyChecker<LocationInvariants, Trace<XcfaState<PtrState<ExplState>>, XcfaAction>, UnitPrec> {
-  val baseChecker = { monolithicExpr: MonolithicExpr ->
-    RefineryChecker(
-      monolithicExpr,
-      logger,
-    )
-  }
-
-  return XcfaPipelineChecker(
-    xcfa,
-    config.inputConfig.property,
-    parseContext,
-    baseChecker,
-    mutableListOf(),
-    logger,
-    config.outputConfig.acceptUnreliableSafe,
-    true,
-  )
+  val transitionSystem = XcfaRefineryTransitionSystemBuilder(xcfa).build()
+  TODO("Not yet implemented")
 }

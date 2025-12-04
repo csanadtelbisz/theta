@@ -19,20 +19,19 @@ package hu.bme.mit.theta.analysis.algorithm.refinery
 import hu.bme.mit.theta.analysis.Trace
 import hu.bme.mit.theta.analysis.algorithm.SafetyChecker
 import hu.bme.mit.theta.analysis.algorithm.SafetyResult
-import hu.bme.mit.theta.analysis.algorithm.bounded.MonolithicExpr
 import hu.bme.mit.theta.analysis.expl.ExplState
 import hu.bme.mit.theta.analysis.expr.ExprAction
 import hu.bme.mit.theta.analysis.unit.UnitPrec
 import hu.bme.mit.theta.common.logging.Logger
 
 class RefineryChecker(
-  val monolithicExpr: MonolithicExpr,
+  private val initState: String,
+  private val transitionSystem: String,
+  private val property: String,
   private val logger: Logger,
 ): SafetyChecker<RefineryProof, Trace<ExplState, ExprAction>, UnitPrec> {
 
-  override fun check(input: UnitPrec): SafetyResult<RefineryProof, Trace<ExplState, ExprAction>> {
-
+  override fun check(input: UnitPrec?): SafetyResult<RefineryProof, Trace<ExplState, ExprAction>> {
     TODO("Not yet implemented")
   }
-
 }
