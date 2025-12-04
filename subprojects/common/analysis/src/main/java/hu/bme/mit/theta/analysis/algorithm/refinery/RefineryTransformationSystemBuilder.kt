@@ -80,12 +80,14 @@ abstract class RefineryTransformationSystemBuilder {
     |}
     """.trimMargin()
 
-  protected open val environmentDeclarations: List<String> get() =
-    listOf("contains NamedPointer[] pointers") +
-      variables.map { "${it.type.refineryType} ${it.name}" }
+  protected open val environmentDeclarations: List<String>
+    get() =
+      listOf("contains NamedPointer[] pointers") +
+        variables.map { "${it.type.refineryType} ${it.name}" }
 
-  protected val environmentSetup: String get() =
-    """
+  protected val environmentSetup: String
+    get() =
+      """
     |class Environment {
     |    ${environmentDeclarations.joinToString("\n    ")}
     |}
@@ -96,13 +98,21 @@ abstract class RefineryTransformationSystemBuilder {
     |atom $ENVIRONMENT.
     """.trimMargin()
 
+  protected val regionExists: String =
+    """
+    |pred regionExists(MemoryRegion region, int address) <->
+    |    exists(region), address(region) == address.
+    """.trimMargin()
+
   protected abstract val transitionDeclarations: List<String>
 
-  protected val transitions: String get() =
-    transitionDeclarations.joinToString("\n\n")
+  protected val transitions: String
+    get() =
+      transitionDeclarations.joinToString("\n\n")
 
-  protected val topLevelDeclaration: List<String> get() =
-    listOf(metamodel, environmentSetup, transitions)
+  protected val topLevelDeclaration: List<String>
+    get() =
+      listOf(metamodel, environmentSetup, transitions)
 
   protected val Type.refineryType: String
     get() =
@@ -150,6 +160,7 @@ abstract class RefineryTransitionRuleBuilder<T>(
     val preConditionClauses: List<String>,
     val actionClauses: List<String>,
   ) {
+
     fun toRefineryRule(): RefineryRule =
       RefineryRule(
         header = name,
@@ -170,15 +181,79 @@ abstract class RefineryTransitionRuleBuilder<T>(
       is SequenceStmt -> stmts.flatMap { it.toRules(transitionName) }
 
       is AssignStmt<*> -> {
-        variables.add(varDecl)
-        val preConditionClauses = mutableListOf<String>()
-        val assignedExpr = expr.toClauses(preConditionClauses)
-        val rule = RefineryRuleData(
-          name = "${transitionName}_${transitionCount++}",
-          preConditionClauses = preConditionClauses,
-          actionClauses = listOf("${varDecl.name}($ENVIRONMENT): $assignedExpr"),
-        )
-        listOf(rule)
+        if (varDecl in pointers) {
+          when (val expr = expr) {
+            is RefExpr<*> -> {
+              val other = expr.decl
+              check(other in pointers) { "Pointer assigned from non-pointer variable: $other" }
+              val parameters = listOf("NamedPointer pointer", "MemoryObject object")
+              val preconditions = listOf(
+                "name(pointer) == \"${varDecl.name}\"",
+                "name(otherPointer) == \"${other.name}\"",
+                "target(otherPointer, object)",
+              )
+              val actions = listOf("target(pointer, object)")
+              val rule = RefineryRuleData(
+                name = "${transitionName}_${transitionCount++}",
+                parameters = parameters,
+                preConditionClauses = preconditions,
+                actionClauses = actions,
+              )
+              listOf(rule)
+            }
+
+            is IntLitExpr -> {
+              val parametersRegionExists = listOf("NamedPointer pointer", "MemoryObject base")
+              val preconditionsRegionExists = listOf(
+                "name(pointer) == \"${varDecl.name}\"",
+                "regionExists(region, ${expr.value})",
+                "parts(region, base)",
+                "offset(base) == 0",
+              )
+              val actionsRegionExists = listOf("target(pointer, base)")
+              val ruleIfRegionExists = RefineryRuleData(
+                name = "${transitionName}_${transitionCount++}",
+                parameters = parametersRegionExists,
+                preConditionClauses = preconditionsRegionExists,
+                actionClauses = actionsRegionExists,
+              )
+
+              val parametersRegionNotExists = listOf("NamedPointer pointer", "MemoryRegion region", "MemoryObject base")
+              val preconditionsRegionNotExists = listOf(
+                "name(pointer) == \"${varDecl.name}\"",
+                "!regionExists(region, ${expr.value})",
+              )
+              val actionsRegionNotExists = listOf(
+                "exists(region)",
+                "address(region) == ${expr.value}",
+                "parts(region, base)",
+                "offset(base) == 0",
+                "target(pointer, base)",
+              )
+              val ruleIfRegionNotExists = RefineryRuleData(
+                name = "${transitionName}_${transitionCount++}",
+                parameters = parametersRegionNotExists,
+                preConditionClauses = preconditionsRegionNotExists,
+                actionClauses = actionsRegionNotExists,
+              )
+
+              listOf(ruleIfRegionExists, ruleIfRegionNotExists)
+            }
+
+            else -> error("Unsupported pointer assignment expression in RefineryRuleBuilder: $this")
+          }
+          TODO()
+        } else {
+          variables.add(varDecl)
+          val preConditionClauses = mutableListOf<String>()
+          val assignedExpr = expr.toClauses(preConditionClauses)
+          val rule = RefineryRuleData(
+            name = "${transitionName}_${transitionCount++}",
+            preConditionClauses = preConditionClauses,
+            actionClauses = listOf("${varDecl.name}($ENVIRONMENT): $assignedExpr"),
+          )
+          listOf(rule)
+        }
       }
 
       is AssumeStmt -> {
