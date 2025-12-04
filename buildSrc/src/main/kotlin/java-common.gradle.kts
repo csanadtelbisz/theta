@@ -39,6 +39,7 @@ dependencies {
     testImplementation(Deps.junit5)
     testImplementation(Deps.junit5param)
     testImplementation(Deps.junit5engine)
+    testImplementation(Deps.junit5launcher)
     testImplementation(Deps.Mockito.core)
     testImplementation(Deps.Mockito.extension)
 }

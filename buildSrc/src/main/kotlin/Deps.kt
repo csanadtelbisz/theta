@@ -95,6 +95,7 @@ object Deps {
     val junit5 = "org.junit.jupiter:junit-jupiter-api:${Versions.junit}"
     val junit5param = "org.junit.jupiter:junit-jupiter-params:${Versions.junit}"
     val junit5engine = "org.junit.jupiter:junit-jupiter-engine:${Versions.junit}"
+    val junit5launcher = "org.junit.platform:junit-platform-launcher:1.13.4"
 
     object Mockito {
 

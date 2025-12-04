@@ -32,6 +32,7 @@ dependencies {
     implementation(project(mapOf("path" to ":theta-solver-z3-legacy")))
     testImplementation(project(":theta-solver-z3-legacy"))
     testImplementation(project(":theta-solver-z3"))
+    testImplementation(project(":theta-grammar"))
     implementation("com.corundumstudio.socketio:netty-socketio:2.0.6")
     testImplementation(project(mapOf("path" to ":theta-xsts-analysis")))
     testImplementation(project(mapOf("path" to ":theta-xsts")))
