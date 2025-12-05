@@ -31,7 +31,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.Arguments
 import org.junit.jupiter.params.provider.MethodSource
 
-class RefineryTransformationSystemBuilderTest {
+class RefineryTransitionSystemBuilderTest {
 
   companion object {
 
@@ -70,6 +70,18 @@ class RefineryTransformationSystemBuilderTest {
     private fun data(): Collection<RefineryRuleBuilderTestData> =
       listOf(
         RefineryRuleBuilderTestData(
+          "skip",
+          listOf(
+            """
+            |rule transition0_0() <->
+            |    true
+            |==>
+            |    $UNSUPPORTED_EMPTY_ACTION.
+            """.trimMargin()
+          ),
+        ),
+
+        RefineryRuleBuilderTestData(
           "(assign v 1)",
           listOf(
             """
@@ -98,9 +110,10 @@ class RefineryTransformationSystemBuilderTest {
           listOf(
             """
             |rule transition0_0() <->
-            |    name(pointer_0) == "p",
-            |    target(pointer_0, base_0),
-            |    !(value(base_0) == 3)
+            |    name(p) == "p",
+            |    target(p, base_0),
+            |    object(base_0, pointed_0),
+            |    !(value(pointed_0) == 3)
             |==>
             |    $UNSUPPORTED_EMPTY_ACTION.
             """.trimMargin()
@@ -112,14 +125,15 @@ class RefineryTransformationSystemBuilderTest {
           "(assign v (deref p 1 Int))",
           listOf(
             """
-            |rule transition0_0() <->
-            |    name(pointer_0) == "p",
-            |    target(pointer_0, base_0),
+            |rule transition0_0(Value pointed_0) <->
+            |    name(p) == "p",
+            |    target(p, base_0),
             |    parts(region_0, base_0),
             |    parts(region_0, referenced_0),
-            |    offset(referenced_0) == offset(base_0) + (1)
+            |    offset(referenced_0) == offset(base_0) + (1),
+            |    object(referenced_0, pointed_0)
             |==>
-            |    v(env): value(referenced_0).
+            |    v(env): value(pointed_0).
             """.trimMargin()
           ),
           setOf("p"),
@@ -130,17 +144,18 @@ class RefineryTransformationSystemBuilderTest {
           listOf(
             """
             |rule transition0_0() <->
-            |    name(pointer_1) == "p",
-            |    target(pointer_1, base_1),
+            |    name(p) == "p",
+            |    target(p, base_1),
             |    parts(region_1, base_1),
             |    parts(region_1, referenced_1),
             |    offset(referenced_1) == offset(base_1) + (1),
-            |    object(referenced_1, pointer_0),
-            |    target(pointer_0, base_0),
+            |    object(referenced_1, pointed_1),
+            |    target(pointed_1, base_0),
             |    parts(region_0, base_0),
             |    parts(region_0, referenced_0),
             |    offset(referenced_0) == offset(base_0) + (2),
-            |    value(referenced_0) == 3
+            |    object(referenced_0, pointed_0),
+            |    value(pointed_0) == 3
             |==>
             |    $UNSUPPORTED_EMPTY_ACTION.
             """.trimMargin()
@@ -152,14 +167,15 @@ class RefineryTransformationSystemBuilderTest {
           "(memassign (deref p 1 Int) 5)",
           listOf(
             """
-            |rule transition0_0(MemoryObject referenced_0) <->
-            |    name(pointer_0) == "p",
-            |    target(pointer_0, base_0),
+            |rule transition0_0(Value pointed_0) <->
+            |    name(p) == "p",
+            |    target(p, base_0),
             |    parts(region_0, base_0),
             |    parts(region_0, referenced_0),
-            |    offset(referenced_0) == offset(base_0) + (1)
+            |    offset(referenced_0) == offset(base_0) + (1),
+            |    object(referenced_0, pointed_0)
             |==>
-            |    value(referenced_0): 5.
+            |    value(pointed_0): 5.
             """.trimMargin()
           ),
           setOf("p"),
@@ -169,7 +185,7 @@ class RefineryTransformationSystemBuilderTest {
           "(assume (= (deref v 0 Int) p)))",
           listOf(),
           setOf("p"),
-          IllegalStateException("Non-pointer variable dereferenced: (var v Int)")
+          IllegalStateException("Pointer expression expected at (deref v 0 Int), expression v does not yield a pointer expression.")
         ),
       )
 

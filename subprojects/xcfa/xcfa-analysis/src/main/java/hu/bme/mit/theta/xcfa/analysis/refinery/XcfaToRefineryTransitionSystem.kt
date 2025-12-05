@@ -17,7 +17,7 @@
 package hu.bme.mit.theta.xcfa.analysis.refinery
 
 import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryRule
-import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryTransformationSystemBuilder
+import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryTransitionSystemBuilder
 import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryTransitionRuleBuilder
 import hu.bme.mit.theta.core.decl.Decl
 import hu.bme.mit.theta.core.type.anytype.RefExpr
@@ -32,7 +32,7 @@ import hu.bme.mit.theta.xcfa.utils.getAllLabels
 
 class XcfaRefineryTransitionSystemBuilder(
   private val xcfa: XCFA,
-) : RefineryTransformationSystemBuilder() {
+) : RefineryTransitionSystemBuilder() {
 
   companion object {
     internal const val LOCATION_DECLARATION_NAME = "loc"
@@ -68,7 +68,7 @@ class XcfaRefineryTransitionRuleBuilder(
       setOf(StmtLabel::class, NopLabel::class, SequenceLabel::class, NondetLabel::class)
   }
 
-  private val env = RefineryTransformationSystemBuilder.ENVIRONMENT
+  private val env = RefineryTransitionSystemBuilder.ENVIRONMENT
   private val loc = XcfaRefineryTransitionSystemBuilder.LOCATION_DECLARATION_NAME
 
   override fun build(transition: XcfaEdge): List<RefineryRule> {
