@@ -27,8 +27,6 @@ import tools.refinery.language.semantics.ModelInitializer
 import tools.refinery.store.dse.modification.ModificationAdapter
 import tools.refinery.store.dse.propagation.PropagationAdapter
 import tools.refinery.store.dse.strategy.BestFirstStoreManager
-import tools.refinery.store.dse.transition.DesignSpaceExplorationAdapter
-import tools.refinery.store.dse.transition.DesignSpaceExplorationStoreAdapter
 import tools.refinery.store.dse.transition.objectives.Criteria
 import tools.refinery.store.model.ModelStore
 import tools.refinery.store.query.ModelQueryAdapter
@@ -49,7 +47,7 @@ class RefineryChecker(
 
   override fun check(input: UnitPrec?): SafetyResult<RefineryProof, Trace<ExplState, ExprAction>> {
     val problem =
-      StandaloneRefinery.getProblemLoader().loadString(transitionSystem.textualDeclarations)
+      StandaloneRefinery.getProblemLoader().loadString(transitionSystem.problem)
     val initializer = StandaloneRefinery.getInstance(ModelInitializer::class.java)
     initializer.readProblem(problem)
 
@@ -73,9 +71,6 @@ class RefineryChecker(
 
     val transitionSystemBuilder = storeBuilder.getAdapter(TransitionSystemBuilder::class.java)
     ProblemContext(initializer.problemTrace, storeBuilder).apply {
-      transitionSystem.transitions.forEach { transition ->
-        transitionSystemBuilder.transition(transition())
-      }
       val targetProvider = transitionSystem.target
       transitionSystemBuilder.accept(Criteria.whenHasMatch(targetProvider()))
     }

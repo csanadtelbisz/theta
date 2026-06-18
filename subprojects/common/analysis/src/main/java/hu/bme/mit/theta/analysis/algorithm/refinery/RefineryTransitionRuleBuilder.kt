@@ -57,26 +57,15 @@ data class RefineryRule(
     check(actionLiterals.isNotEmpty()) { "Action clauses cannot be empty in a Refinery rule." }
   }
 
-  val preconditionName = "${name}_precondition"
-
-  fun getHelpers(): String =
+  override fun toString(): String =
     """
     |${helperQueries.joinToString("\n\n")}
     |
-    |pred $preconditionName(${parameters.joinToString(", ") { "${it.first} ${it.second.name}" }}) <->
+    |transition rule $name(${parameters.joinToString(", ")}) <->
     |    ${
       if (preConditionClauses.isEmpty()) "true"
       else preConditionClauses.joinToString(",\n    ")
-    }.
-    """
-      .trimMargin()
-
-  override fun toString(): String =
-    """
-    |${getHelpers()}
-    |
-    |rule $name(${parameters.joinToString(", ")}) <->
-    |    $preconditionName(${parameters.joinToString(", ") { it.second.name } })
+    }
     |==>
     |    ${actionLiterals.joinToString(",\n    ")}.
     """

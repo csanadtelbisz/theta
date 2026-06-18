@@ -20,7 +20,6 @@ import tools.refinery.logic.dnf.AnyQuery
 import tools.refinery.store.dse.transition.Rule
 
 class RefineryTransitionSystem(
-  val textualDeclarations: String,
-  val transitions: List<ProblemContext.() -> Rule>,
+  val problem: String,
   val target: ProblemContext.() -> AnyQuery,
 )

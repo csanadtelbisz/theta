@@ -129,8 +129,8 @@ abstract class RefineryTransitionSystemBuilder {
 
   protected abstract val transitions: List<RefineryRule>
 
-  protected val transitionHelpers: String
-    get() = transitions.joinToString("\n\n") { it.getHelpers() }
+  protected val transitionDeclarations: String
+    get() = transitions.joinToString("\n\n") { it.toString() }
 
   // Error property
 
@@ -157,38 +157,13 @@ abstract class RefineryTransitionSystemBuilder {
         initialState,
         "% --- ERROR PROPERTY ---",
         errorDeclaration,
-        "% --- TRANSITIONS HELPERS ---",
-        transitionHelpers,
+        "% --- TRANSITIONS ---",
+        transitionDeclarations,
       )
 
   fun build(): RefineryTransitionSystem =
     RefineryTransitionSystem(
-      textualDeclarations = topLevelDeclaration.joinToString("\n\n"),
-      transitions =
-        transitions.map { rule ->
-          {
-            val variables = rule.parameters.map { it.second }.toTypedArray()
-            val constDeclarations = mutableSetOf<ConstantActionLiteral>()
-            val actionLiterals = rule.actionLiterals.map { it() }.filter {
-              if (it is ConstantActionLiteral) {
-                constDeclarations.find { c -> c.variable == it.variable }?.run {
-                  check (this.nodeId == it.nodeId) {
-                    "Conflicting constant declarations for variable ${it.variable}: ${this.nodeId} vs ${it.nodeId}"
-                  }
-                  false
-                } ?: run {
-                  constDeclarations.add(it)
-                  true
-                }
-              } else true
-            }
-            Rule.builder(rule.name)
-              .parameters(*variables)
-              .clause(getQueryForPartialSymbol(rule.preconditionName).dnf.call(*variables))
-              .action(actionLiterals)
-              .build()
-          }
-        },
+      problem = topLevelDeclaration.joinToString("\n\n"),
       target = {
         Query.of("target") { builder ->
           builder.clause(must(getPartialRelation("error_property").call()))
