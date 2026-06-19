@@ -44,6 +44,8 @@ abstract class RefineryTransitionSystemBuilder {
 
   protected val metamodel: String =
     """
+    |import builtin::strategy.
+    |
     |class MemoryRegion {
     |    int address
     |    contains MemoryObject[] parts
