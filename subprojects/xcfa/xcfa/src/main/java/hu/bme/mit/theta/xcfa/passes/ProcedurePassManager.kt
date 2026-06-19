@@ -74,7 +74,7 @@ class CPasses(property: XcfaProperty, parseContext: ParseContext, uniqueWarningL
     listOf(
       // handling remaining function calls
       MemsafetyPass(property, parseContext),
-      NoSideEffectPass(parseContext),
+      NoSideEffectPass(property, parseContext),
       LbePass(parseContext),
       NormalizePass(), // needed after lbe, TODO
       DeterministicPass(), // needed after lbe, TODO
@@ -136,7 +136,7 @@ class NontermValidationPasses(
     listOf(
       // handling remaining function calls
       MemsafetyPass(property, parseContext),
-      NoSideEffectPass(parseContext),
+      NoSideEffectPass(property, parseContext),
       NondetFunctionPass(),
       HavocPromotionAndRange(parseContext),
       // Final cleanup

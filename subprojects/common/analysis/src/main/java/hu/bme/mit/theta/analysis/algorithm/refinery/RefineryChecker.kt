@@ -26,28 +26,27 @@ import tools.refinery.generator.standalone.StandaloneRefinery
 import tools.refinery.language.semantics.ModelInitializer
 import tools.refinery.store.dse.modification.ModificationAdapter
 import tools.refinery.store.dse.propagation.PropagationAdapter
-import tools.refinery.store.dse.strategy.BestFirstStoreManager
-import tools.refinery.store.dse.transition.objectives.Criteria
+import tools.refinery.store.dse.transition.DesignSpaceExplorationAdapter
 import tools.refinery.store.model.ModelStore
 import tools.refinery.store.query.ModelQueryAdapter
 import tools.refinery.store.query.interpreter.QueryInterpreterAdapter
 import tools.refinery.store.reasoning.ReasoningAdapter
 import tools.refinery.store.reasoning.ReasoningStoreAdapter
+import tools.refinery.store.reasoning.translator.multiobject.MultiObjectTranslator
 import tools.refinery.store.statecoding.StateCoderAdapter
 import tools.refinery.store.transition.system.TransitionSystemAdapter
-import tools.refinery.store.transition.system.TransitionSystemBuilder
+import tools.refinery.store.transition.system.strategy.TransitionSystemStoreManager
 import tools.refinery.visualization.ModelVisualizerAdapter
 import tools.refinery.visualization.internal.FileFormat
 import kotlin.jvm.java
 
 class RefineryChecker(
-  private val transitionSystem: RefineryTransitionSystem,
+  private val problemString: String,
   private val logger: Logger,
 ) : SafetyChecker<RefineryProof, Trace<ExplState, ExprAction>, UnitPrec> {
 
   override fun check(input: UnitPrec?): SafetyResult<RefineryProof, Trace<ExplState, ExprAction>> {
-    val problem =
-      StandaloneRefinery.getProblemLoader().loadString(transitionSystem.problem)
+    val problem = StandaloneRefinery.getProblemLoader().loadString(problemString)
     val initializer = StandaloneRefinery.getInstance(ModelInitializer::class.java)
     initializer.readProblem(problem)
 
@@ -64,17 +63,12 @@ class RefineryChecker(
         .with(PropagationAdapter.builder())
         .with(StateCoderAdapter.builder())
         .with(ModificationAdapter.builder())
-        .with(TransitionSystemAdapter.builder())
+        .with(DesignSpaceExplorationAdapter.builder())
         .with(ReasoningAdapter.builder())
+        .with(TransitionSystemAdapter.builder())
+        .with(MultiObjectTranslator())
 
     initializer.configureStoreBuilder(storeBuilder)
-
-    val transitionSystemBuilder = storeBuilder.getAdapter(TransitionSystemBuilder::class.java)
-    ProblemContext(initializer.problemTrace, storeBuilder).apply {
-      val targetProvider = transitionSystem.target
-      transitionSystemBuilder.accept(Criteria.whenHasMatch(targetProvider()))
-    }
-
     val store = storeBuilder.build()
 
     store.getAdapter(ReasoningStoreAdapter::class.java).createInitialModel(initializer.modelSeed).use { model ->
@@ -82,11 +76,8 @@ class RefineryChecker(
       val initialVersion = model.commit()
       queryEngine.flushChanges()
 
-      val bestFirst = BestFirstStoreManager(store, 1)
-      bestFirst.startExploration(initialVersion)
-      model
-        .getAdapter(ModelVisualizerAdapter::class.java)
-        .visualize(bestFirst.getVisualizationStore())
+      val manager = TransitionSystemStoreManager(store)
+      manager.startExploration(initialVersion)
     }
 
     TODO("Not yet implemented")

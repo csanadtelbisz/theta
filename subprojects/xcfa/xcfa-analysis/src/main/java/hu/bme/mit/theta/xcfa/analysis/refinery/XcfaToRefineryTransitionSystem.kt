@@ -15,8 +15,8 @@
  */
 package hu.bme.mit.theta.xcfa.analysis.refinery
 
-import hu.bme.mit.theta.analysis.algorithm.refinery.ActionLiteralProvider
 import hu.bme.mit.theta.analysis.algorithm.refinery.MemoryAllocationExpr
+import hu.bme.mit.theta.analysis.algorithm.refinery.MemoryDeallocationExpr
 import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryRule
 import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryTransitionRuleBuilder
 import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryTransitionSystemBuilder
@@ -31,9 +31,6 @@ import hu.bme.mit.theta.xcfa.ErrorDetection
 import hu.bme.mit.theta.xcfa.model.*
 import hu.bme.mit.theta.xcfa.utils.AssignStmtLabel
 import hu.bme.mit.theta.xcfa.utils.getAllLabels
-import tools.refinery.logic.term.Variable
-import tools.refinery.logic.term.truthvalue.TruthValue
-import tools.refinery.store.dse.transition.actions.ActionLiterals
 
 class XcfaRefineryTransitionSystemBuilder(
   xcfa: XCFA,
@@ -105,7 +102,7 @@ class XcfaRefineryTransitionSystemBuilder(
   override val transitions: List<RefineryRule> =
     xcfa.initProcedures.first().first.edges.flatMap { edge -> xcfaTransitionBuilder.build(edge) }
 
-  override val errorProperty: String
+  override val targetProperty: String
     get() = "$LOCATION_DECLARATION(${ENVIRONMENT}, ${procedure.errorLoc.get().name.refinerified})"
 }
 
@@ -145,14 +142,7 @@ class XcfaRefineryTransitionRuleBuilder(
         locations.add(source)
         locations.add(target)
         val locPrecondition = "$loc($env, $Location::$source)"
-        val env = rule.actionParameters.find { it.name == env } ?: Variable.of(env)
-        val targetVar = Variable.of(target)
-        val locActions =
-          listOf<ActionLiteralProvider>(
-            { ActionLiterals.constant(env, getNodeId(this@XcfaRefineryTransitionRuleBuilder.env)) },
-            { ActionLiterals.constant(targetVar, getNodeId("$Location::$target")) },
-            { ActionLiterals.put(getStorageSymbol(loc), TruthValue.TRUE, env, targetVar) },
-          )
+        val locActions = listOf("$loc($env, $target)")
         rule
           .copy(
             preConditionClauses = setOf(locPrecondition) + rule.preConditionClauses,
@@ -171,6 +161,10 @@ class XcfaRefineryTransitionRuleBuilder(
             val ret = (params[0] as RefExpr).decl as VarDecl
             val size = (params[1] as IntLitExpr).value
             AssignStmtLabel(ret, MemoryAllocationExpr(size, ret.type), metadata)
+          }
+          "free" -> {
+            val ret = (params[0] as RefExpr).decl as VarDecl
+            AssignStmtLabel(ret, MemoryDeallocationExpr(params[1]), metadata)
           }
           else -> error("Unsupported invoke label: $this")
         }

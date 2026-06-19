@@ -16,13 +16,24 @@
 package hu.bme.mit.theta.xcfa.passes
 
 import hu.bme.mit.theta.frontend.ParseContext
+import hu.bme.mit.theta.xcfa.ErrorDetection
+import hu.bme.mit.theta.xcfa.XcfaProperty
 import hu.bme.mit.theta.xcfa.model.*
 
 /**
  * Transforms all ignored calls into nop/skip labels. Requires the ProcedureBuilder be
  * `deterministic`.
  */
-class NoSideEffectPass(val parseContext: ParseContext) : ProcedurePass {
+class NoSideEffectPass(property: XcfaProperty, val parseContext: ParseContext) : ProcedurePass {
+
+  private val sideEffectFreeFunctions =
+    listOfNotNull(
+      Regex("sleep"),
+      Regex("pthread_mutex_destroy"),
+      if(property.verifiedProperty !in listOf(ErrorDetection.MEMSAFETY, ErrorDetection.MEMCLEANUP))
+        Regex("free")
+      else null,
+    )
 
   override fun run(builder: XcfaProcedureBuilder): XcfaProcedureBuilder {
     checkNotNull(builder.metaData["deterministic"])
@@ -30,7 +41,7 @@ class NoSideEffectPass(val parseContext: ParseContext) : ProcedurePass {
       val edges = edge.splitIf(this::predicate)
       if (
         edges.size > 1 ||
-          (edges.size == 1 && predicate((edges[0].label as SequenceLabel).labels[0]))
+        (edges.size == 1 && predicate((edges[0].label as SequenceLabel).labels[0]))
       ) {
         builder.removeEdge(edge)
         edges.forEach {
@@ -48,12 +59,6 @@ class NoSideEffectPass(val parseContext: ParseContext) : ProcedurePass {
   }
 
   private fun predicate(label: XcfaLabel): Boolean {
-    return label is InvokeLabel &&
-      listOf(
-          Regex("sleep"),
-          Regex("free"),
-          Regex("pthread_mutex_destroy"), // TODO: is this safe?
-        )
-        .any { label.name.matches(it) }
+    return label is InvokeLabel && sideEffectFreeFunctions.any { label.name.matches(it) }
   }
 }

@@ -19,10 +19,6 @@ import hu.bme.mit.theta.core.decl.Decl
 import hu.bme.mit.theta.core.type.Type
 import hu.bme.mit.theta.core.type.booltype.BoolType
 import hu.bme.mit.theta.core.type.inttype.IntType
-import tools.refinery.logic.dnf.Query
-import tools.refinery.store.dse.transition.Rule
-import tools.refinery.store.dse.transition.actions.ConstantActionLiteral
-import tools.refinery.store.reasoning.literal.PartialLiterals.must
 
 abstract class RefineryTransitionSystemBuilder {
 
@@ -134,12 +130,13 @@ abstract class RefineryTransitionSystemBuilder {
 
   // Error property
 
-  protected abstract val errorProperty: String
+  protected abstract val targetProperty: String
 
-  protected val errorDeclaration: String
+  protected val targetDeclaration: String
     get() =
       """
-      |pred error_property() <-> $errorProperty.
+      |@target
+      |pred error_property() <-> $targetProperty.
       """
         .trimMargin()
 
@@ -156,18 +153,10 @@ abstract class RefineryTransitionSystemBuilder {
         "% --- INITIAL STATE ---",
         initialState,
         "% --- ERROR PROPERTY ---",
-        errorDeclaration,
+        targetDeclaration,
         "% --- TRANSITIONS ---",
         transitionDeclarations,
       )
 
-  fun build(): RefineryTransitionSystem =
-    RefineryTransitionSystem(
-      problem = topLevelDeclaration.joinToString("\n\n"),
-      target = {
-        Query.of("target") { builder ->
-          builder.clause(must(getPartialRelation("error_property").call()))
-        }
-      },
-    )
+  fun build(): String = topLevelDeclaration.joinToString("\n\n")
 }

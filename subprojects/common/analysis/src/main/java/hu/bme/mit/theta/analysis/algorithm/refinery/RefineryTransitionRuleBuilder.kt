@@ -19,7 +19,6 @@ import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryTransitionRuleBuilde
 import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryTransitionRuleBuilder.RefineryExpr.ExprType.POINTER
 import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryTransitionSystemBuilder.Companion.ENVIRONMENT
 import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryTransitionSystemBuilder.Companion.refinerified
-import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryTransitionSystemBuilder.Companion.refineryType
 import hu.bme.mit.theta.core.decl.Decl
 import hu.bme.mit.theta.core.stmt.*
 import hu.bme.mit.theta.core.type.*
@@ -27,30 +26,23 @@ import hu.bme.mit.theta.core.type.abstracttype.AddExpr
 import hu.bme.mit.theta.core.type.abstracttype.EqExpr
 import hu.bme.mit.theta.core.type.abstracttype.ModExpr
 import hu.bme.mit.theta.core.type.abstracttype.NeqExpr
+import hu.bme.mit.theta.core.type.abstracttype.PosExpr
 import hu.bme.mit.theta.core.type.anytype.Dereference
 import hu.bme.mit.theta.core.type.anytype.IteExpr
 import hu.bme.mit.theta.core.type.anytype.RefExpr
-import hu.bme.mit.theta.core.type.booltype.*
+import hu.bme.mit.theta.core.type.booltype.AndExpr
 import hu.bme.mit.theta.core.type.booltype.BoolExprs.Not
+import hu.bme.mit.theta.core.type.booltype.BoolLitExpr
+import hu.bme.mit.theta.core.type.booltype.NotExpr
+import hu.bme.mit.theta.core.type.booltype.OrExpr
 import hu.bme.mit.theta.core.type.inttype.IntExprs.Int
 import hu.bme.mit.theta.core.type.inttype.IntLitExpr
-import hu.bme.mit.theta.core.type.inttype.IntType
-import tools.refinery.logic.term.NodeVariable
-import tools.refinery.logic.term.Variable
-import tools.refinery.logic.term.intinterval.IntInterval
-import tools.refinery.logic.term.intinterval.IntIntervalDomain
-import tools.refinery.logic.term.truthvalue.TruthValue
-import tools.refinery.logic.term.truthvalue.TruthValueDomain
-import tools.refinery.store.dse.modification.actions.ModificationActionLiterals
-import tools.refinery.store.dse.transition.actions.ActionLiterals
 
 data class RefineryRule(
   val name: String,
-  val parameters: List<Pair<String, NodeVariable>> = listOf(),
+  val parameters: List<Pair<String, String>> = listOf(),
   val preConditionClauses: Set<String>,
-  val helperQueries: Set<String> = setOf(),
-  val actionParameters: List<NodeVariable> = listOf(),
-  val actionLiterals: List<ActionLiteralProvider>,
+  val actionLiterals: List<String>,
 ) {
 
   init {
@@ -59,9 +51,7 @@ data class RefineryRule(
 
   override fun toString(): String =
     """
-    |${helperQueries.joinToString("\n\n")}
-    |
-    |transition rule $name(${parameters.joinToString(", ")}) <->
+    |transition rule $name(${parameters.joinToString(", ") { "${it.first} ${it.second}" }}) <->
     |    ${
       if (preConditionClauses.isEmpty()) "true"
       else preConditionClauses.joinToString(",\n    ")
@@ -78,6 +68,7 @@ abstract class RefineryTransitionRuleBuilder<T>(
 ) {
 
   companion object {
+
     val supportedOperators =
       setOf("+", "-", "*", "/", "==", "!=", "<", "<=", ">", ">=", "!", "&&", "||")
   }
@@ -89,6 +80,7 @@ abstract class RefineryTransitionRuleBuilder<T>(
   protected sealed class RefineryRuleBlock {
 
     class Id(var id: Int) {
+
       override fun toString(): String = id.toString()
     }
 
@@ -104,12 +96,9 @@ abstract class RefineryTransitionRuleBuilder<T>(
   }
 
   protected data class SingleRefineryRule(
-    val nameProviders: Set<NameProvider> = setOf(),
-    val parameters: List<Pair<String, NodeVariable>> = listOf(),
-    val preConditionClauses: Set<String>,
-    val helperQueries: Set<() -> String> = setOf(),
-    val actionParameters: List<NodeVariable> = listOf(),
-    val actionLiterals: List<ActionLiteralProvider>,
+    val parameters: List<Pair<String, String>> = listOf(),
+    val preConditionClauses: Set<String> = setOf(),
+    val actionLiterals: List<String> = listOf(),
     override var preId: Id = Id(-1),
     override var postId: Id = Id(-1),
   ) : RefineryRuleBlock() {
@@ -126,13 +115,10 @@ abstract class RefineryTransitionRuleBuilder<T>(
 
     fun toRefineryRule(transitionName: String): RefineryRule {
       val name = "${transitionName}__${preId}_to_${postId}"
-      nameProviders.forEach { it.name = name }
       return RefineryRule(
         name = name,
         parameters = parameters,
         preConditionClauses = preConditionClauses,
-        helperQueries = helperQueries.map { it() }.toSet(),
-        actionParameters = actionParameters,
         actionLiterals = actionLiterals,
       )
     }
@@ -150,10 +136,10 @@ abstract class RefineryTransitionRuleBuilder<T>(
 
     override fun setIds(preId: Id, postId: Id) {
       super.setIds(preId, postId)
-      for (i in 0 until blocks.size) {
+      for ((i, block) in blocks.withIndex()) {
         val pre = if (i == 0) preId else blocks[i - 1].postId
         val post = if (i == blocks.size - 1) postId else Id(-1)
-        blocks[i].setIds(pre, post)
+        block.setIds(pre, post)
       }
     }
   }
@@ -182,16 +168,9 @@ abstract class RefineryTransitionRuleBuilder<T>(
   protected data class RefineryExpr(
     val type: ExprType,
     val preConditionClauses: Set<String>,
-    val expr: RefineryExprResult<*>,
+    val expr: String,
     val parameters: Set<Pair<String, String>> = setOf(),
   ) {
-
-    constructor(
-      type: ExprType,
-      preConditionClauses: Set<String>,
-      expr: String,
-      parameters: Set<Pair<String, String>> = setOf(),
-    ) : this(type, preConditionClauses, RefineryExprResult<Nothing>(expr), parameters)
 
     enum class ExprType {
       POINTER,
@@ -220,139 +199,85 @@ abstract class RefineryTransitionRuleBuilder<T>(
       is AssignStmt<*> -> toRules()
       is AssumeStmt -> toRules()
       is MemoryAssignStmt<*, *, *> -> toRules()
-      is SkipStmt -> SingleRefineryRule(preConditionClauses = setOf(), actionLiterals = listOf())
+      is SkipStmt -> SingleRefineryRule()
       is SequenceStmt ->
         SequenceRefineryRuleBlock(stmts.filter { it !is SkipStmt }.map { it.toRules() })
+
       else -> error("Unsupported statement in RefineryRuleBuilder: $this")
     }
   }
 
   private fun AssignStmt<*>.toRules(): RefineryRuleBlock {
     val name = varDecl.name.refinerified
-    val env = Variable.of("env")
+    val env = "env"
     return if (varDecl in pointers) {
       val pointer = "pointer_$name"
       val commonPreconditions = mutableSetOf("pointer($name, $pointer)")
       if (expr is MemoryAllocationExpr<*>) {
         val expr = expr as MemoryAllocationExpr<*>
-        val pointerVar = Variable.of(pointer)
-        val region = Variable.of("allocated_region")
-        val base = Variable.of("allocated_base")
-        val nameProvider = NameProvider { "${it}_helper" }
-        val helper = { "int ${nameProvider()}() = next_address($ENVIRONMENT) + 1." }
+        val region = "allocated_region"
+        val base = "allocated_base"
 
         SingleRefineryRule(
-          nameProviders = setOf(nameProvider),
-          parameters = listOf("Pointer" to pointerVar),
+          parameters = listOf("Pointer" to pointer, "@new MemoryRegion" to region, "@new MemoryObject" to base),
           preConditionClauses = commonPreconditions,
-          helperQueries = setOf(helper),
-          actionParameters = listOf(region, base, env),
           actionLiterals =
             listOf(
-              { ModificationActionLiterals.create(region) },
-              {
-                ActionLiterals.put(
-                  getStorageSymbol("MemoryRegion::size"),
-                  IntInterval.of(expr.size.toInt()),
-                  region,
-                )
-              },
-              { ActionLiterals.put(getStorageSymbol("valid"), TruthValue.TRUE, region) },
-              { ActionLiterals.constant(env, getNodeId(ENVIRONMENT)) },
-              {
-                val type = IntIntervalDomain.INSTANCE.abstractType()
-                val helperQuery = getHelperQuery(nameProvider(), type, listOf())
-                ActionLiterals.putComputed(
-                  getStorageSymbol("next_address"),
-                  listOf(env),
-                  helperQuery,
-                  listOf(),
-                )
-              },
-              { ModificationActionLiterals.create(base) },
-              { ActionLiterals.put(getStorageSymbol("parts"), inferredContainment("parts"), region, base) },
-              { ActionLiterals.put(getStorageSymbol("offset"), IntInterval.ZERO, base) },
-              { ActionLiterals.put(getStorageSymbol("target"), TruthValue.TRUE, pointerVar, base) },
-            ),
+              "MemoryRegion::address($region): next_address($env)",
+              "MemoryRegion::size($region): ${expr.size}",
+              "valid($region)",
+              "next_address($ENVIRONMENT): next_address($ENVIRONMENT) + 1",
+              "parts($region, $base)",
+              "offset($base): 0",
+              "target($pointer, $base)",
+            )
         )
       } else {
         NondetRefineryRuleBlock(
           expr
             .getPointerExpr(this)
-            .map { (_, preconds, expr, _) ->
+            .map { (_, preconditions, pointerExpr, _) ->
               val target = "target"
-              val precondsPointer = listOf("target($expr, $target)")
-              val pointerVar = Variable.of(pointer)
-              val targetVar = Variable.of(target)
+              val preconditionsPointer = listOf("target($pointerExpr, $target)")
               SingleRefineryRule(
-                parameters = listOf("Pointer" to pointerVar, "Pointable" to targetVar),
-                preConditionClauses = commonPreconditions + preconds + precondsPointer,
-                actionLiterals =
-                  listOf {
-                    ActionLiterals.put(
-                      getStorageSymbol("target"),
-                      TruthValue.TRUE,
-                      pointerVar,
-                      targetVar,
-                    )
-                  },
+                parameters = listOf("Pointer" to pointer, "Pointable" to target),
+                preConditionClauses = commonPreconditions + preconditions + preconditionsPointer,
+                actionLiterals = listOf("target($pointer, $target)"),
               )
             }
             .toSet()
         )
       }
     } else {
-      variables.add(varDecl)
-      val type =
-        when (varDecl.type) {
-          is IntType -> IntIntervalDomain.INSTANCE.abstractType()
-          is BoolType -> TruthValueDomain.INSTANCE.abstractType()
-          else -> error("Unsupported variable type in RefineryRuleBuilder: ${varDecl.type}")
-        } to varDecl.type.refineryType
-      NondetRefineryRuleBlock(
-        expr
-          .getNonPointerExpr(this)
-          .map { (_, preconditions, expr, params) ->
-            if (expr.domainExpr != null) {
-              val parameters = params.map { (type, name) -> type to Variable.of(name) }
+      if (expr is MemoryDeallocationExpr<*>) {
+        val expr = expr as MemoryDeallocationExpr<*>
+        NondetRefineryRuleBlock(
+          expr.getPointerExpr(this).map { (_, preconditions, pointerExpr, _) ->
+            val target = "target"
+            val region = "region"
+            val preconditionsPointer = listOf("target($pointerExpr, $target)", "parts($region, $target)")
+
+            SingleRefineryRule(
+              parameters = listOf("MemoryRegion" to region),
+              preConditionClauses = preconditions + preconditionsPointer,
+              actionLiterals = listOf("!valid($region)"),
+            )
+          }.toSet()
+        )
+      } else {
+        variables.add(varDecl)
+        NondetRefineryRuleBlock(
+          expr
+            .getNonPointerExpr(this)
+            .map { (_, preconditions, expr, _) ->
               SingleRefineryRule(
-                parameters = parameters,
                 preConditionClauses = preconditions,
-                actionLiterals =
-                  listOf(
-                    { ActionLiterals.constant(env, getNodeId(ENVIRONMENT)) },
-                    { ActionLiterals.put(getStorageSymbol(name), expr.domainExpr, env) },
-                  ),
-              )
-            } else {
-              val nameProvider = NameProvider { "${it}_helper" }
-              val paramList = params.joinToString { "${it.first} ${it.second}" }
-              val helper = { "${type.second} ${nameProvider()}($paramList) = $expr." }
-              val parameters = params.map { (type, name) -> type to Variable.of(name) }
-              SingleRefineryRule(
-                nameProviders = setOf(nameProvider),
-                parameters = parameters,
-                preConditionClauses = preconditions,
-                helperQueries = setOf(helper),
-                actionLiterals =
-                  listOf(
-                    { ActionLiterals.constant(env, getNodeId(ENVIRONMENT)) },
-                    {
-                      val helperParams = parameters.map { it.second }
-                      val helperQuery = getHelperQuery(nameProvider(), type.first, helperParams)
-                      ActionLiterals.putComputed(
-                        getStorageSymbol(name),
-                        listOf(env),
-                        helperQuery,
-                        helperParams,
-                      )
-                    },
-                  ),
+                actionLiterals = listOf("$name(env): $expr"),
               )
             }
-          }
-          .toSet()
-      )
+            .toSet()
+        )
+      }
     }
   }
 
@@ -362,8 +287,7 @@ abstract class RefineryTransitionRuleBuilder<T>(
         .getNonPointerExpr(this)
         .map { (_, preconditions, expr, _) ->
           SingleRefineryRule(
-            preConditionClauses = preconditions + listOf(expr.toString()),
-            actionLiterals = emptyList(),
+            preConditionClauses = preconditions + listOf(expr),
           )
         }
         .toSet()
@@ -380,69 +304,27 @@ abstract class RefineryTransitionRuleBuilder<T>(
               exprType != derefType -> null
 
               exprType == POINTER -> {
-                val derefExprVar = Variable.of(derefExpr.toString())
-                val targetVar = Variable.of("target")
+                val target = "target"
                 val preconditions =
-                  exprPreconditions + derefPreconditions + "target($exprExpr, target)"
+                  exprPreconditions + derefPreconditions + "target($exprExpr, $target)"
                 SingleRefineryRule(
-                  parameters = listOf("Pointer" to derefExprVar, "Pointable" to targetVar),
+                  parameters = listOf("Pointer" to derefExpr, "Pointable" to target),
                   preConditionClauses = preconditions,
-                  actionLiterals =
-                    listOf {
-                      ActionLiterals.put(
-                        getStorageSymbol("target"),
-                        TruthValue.TRUE,
-                        derefExprVar,
-                        targetVar,
-                      )
-                    },
+                  actionLiterals = listOf("target($derefExpr, $target)"),
                 )
               }
 
               derefType == NON_POINTER -> {
-                val derefStripped = derefExpr.toString().removePrefix("value(").removeSuffix(")")
-                val parameters = exprParams.map { it.first to Variable.of(it.second) }
-                val derefStrippedVar =
-                  parameters.find { it.second.name == derefStripped }?.second
-                    ?: Variable.of(derefStripped)
+                val derefStripped = derefExpr.removePrefix("value(").removeSuffix(")")
+                val parameters = exprParams.toList()
+                val derefStrippedVar = parameters.find { it.second == derefStripped }?.second ?: derefStripped
                 val ruleParameters = (setOf("Value" to derefStrippedVar) + parameters).toList()
 
-                if (exprExpr.domainExpr != null) {
-                  SingleRefineryRule(
-                    parameters = ruleParameters,
-                    preConditionClauses = exprPreconditions + derefPreconditions,
-                    actionLiterals =
-                      listOf {
-                        ActionLiterals.put(
-                          getStorageSymbol("value"),
-                          exprExpr.domainExpr,
-                          derefStrippedVar,
-                        )
-                      },
-                  )
-                } else {
-                  val nameProvider = NameProvider { "${it}_helper" }
-                  val paramList = exprParams.joinToString { "${it.first} ${it.second}" }
-                  val helper = { "int ${nameProvider()}($paramList) = $exprExpr." }
-                  SingleRefineryRule(
-                    nameProviders = setOf(nameProvider),
-                    parameters = ruleParameters,
-                    preConditionClauses = exprPreconditions + derefPreconditions,
-                    helperQueries = setOf(helper),
-                    actionLiterals =
-                      listOf {
-                        val helperParams = parameters.map { it.second }
-                        val type = IntIntervalDomain.INSTANCE.abstractType()
-                        val helperQuery = getHelperQuery(nameProvider(), type, helperParams)
-                        ActionLiterals.putComputed(
-                          getStorageSymbol("value"),
-                          listOf(derefStrippedVar),
-                          helperQuery,
-                          helperParams,
-                        )
-                      },
-                  )
-                }
+                SingleRefineryRule(
+                  parameters = ruleParameters,
+                  preConditionClauses = exprPreconditions + derefPreconditions,
+                  actionLiterals = listOf("value(${derefStrippedVar}): $exprExpr"),
+                )
               }
 
               else -> error("Unreachable branch.")
@@ -467,10 +349,8 @@ abstract class RefineryTransitionRuleBuilder<T>(
             preConditionClauses = setOf(),
             expr =
               when (this) {
-                is BoolLitExpr ->
-                  if (value) RefineryExprResult("true", TruthValue.TRUE)
-                  else RefineryExprResult("false", TruthValue.FALSE)
-                is IntLitExpr -> RefineryExprResult(value.toString(), IntInterval.of(value.toInt()))
+                is BoolLitExpr -> value.toString()
+                is IntLitExpr -> value.toString()
                 else -> error("Unsupported literal expression in RefineryRuleBuilder: $this")
               },
           ),
@@ -620,10 +500,12 @@ abstract class RefineryTransitionRuleBuilder<T>(
                   parameters = lParams + rParams,
                 )
               }
+
               POINTER if rType == NON_POINTER -> {
                 // skipping mod for pointers
                 RefineryExpr(lType, lPreconditions, lExpr, lParams)
               }
+
               else -> null
             }
           }
@@ -642,6 +524,8 @@ abstract class RefineryTransitionRuleBuilder<T>(
           else -> toNonPointerClauses("!")
         }
 
+      is PosExpr<*> -> op.toClauses()
+
       is UnaryExpr<*, *> -> toNonPointerClauses()
       is BinaryExpr<*, *> -> toNonPointerClauses()
       is MultiaryExpr<*, *> -> toNonPointerClauses()
@@ -652,7 +536,7 @@ abstract class RefineryTransitionRuleBuilder<T>(
             branchExprs.map { (type, preconds, expr, params) ->
               RefineryExpr(
                 type = type,
-                preConditionClauses = condPreconditions + listOf(condExpr.toString()) + preconds,
+                preConditionClauses = condPreconditions + listOf(condExpr) + preconds,
                 expr = expr,
                 parameters = params,
               )
@@ -677,7 +561,7 @@ abstract class RefineryTransitionRuleBuilder<T>(
       result.toSet()
     }
 
-  private fun List<RefineryExprResult<*>>.join(operator: String): String =
+  private fun List<String>.join(operator: String): String =
     this.joinToString(" $operator ") { "($it)" }
 
   private fun Expr<*>.getPointerExpr(parent: Any): Set<RefineryExpr> =
