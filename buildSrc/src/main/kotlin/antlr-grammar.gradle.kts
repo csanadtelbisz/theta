@@ -1,8 +1,5 @@
-
-import org.gradle.api.plugins.internal.JavaPluginHelper
-
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -16,27 +13,27 @@ import org.gradle.api.plugins.internal.JavaPluginHelper
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  */
+import org.gradle.api.plugins.internal.JavaPluginHelper
 
 apply<FixedAntlrPlugin>()
 
 abstract class FixedAntlrPlugin @Inject constructor(objectFactory: ObjectFactory) : AntlrPlugin(objectFactory) {
 
-  override fun apply(project: Project) {
-    super.apply(project)
-    val configuration = JavaPluginHelper.getJavaComponent(project).mainFeature.apiConfiguration!!
-    val extendsFrom = configuration.extendsFrom
-    val antlrConfiguration = extendsFrom.first { it.name == ANTLR_CONFIGURATION_NAME }
-    val filtered = extendsFrom.filter { it.name != ANTLR_CONFIGURATION_NAME }
-    configuration.setExtendsFrom(filtered)
-    JavaPluginHelper.getJavaComponent(project).mainFeature.compileOnlyConfiguration.extendsFrom(antlrConfiguration)
-  }
+    override fun apply(project: Project) {
+        super.apply(project)
+        val configuration = JavaPluginHelper.getJavaComponent(project).mainFeature.apiConfiguration!!
+        val extendsFrom = configuration.extendsFrom
+        val antlrConfiguration = extendsFrom.first { it.name == ANTLR_CONFIGURATION_NAME }
+        val filtered = extendsFrom.filter { it.name != ANTLR_CONFIGURATION_NAME }
+        configuration.setExtendsFrom(filtered)
+        JavaPluginHelper.getJavaComponent(project).mainFeature.compileOnlyConfiguration.extendsFrom(antlrConfiguration)
+    }
 
 }
 
 dependencies {
     val antlr: Configuration by configurations
     val api: Configuration by configurations
-
     antlr(Deps.Antlr.antlr)
     api(Deps.Antlr.runtime)
 }
