@@ -66,7 +66,7 @@ class RefineryChecker(
         .with(DesignSpaceExplorationAdapter.builder())
         .with(ReasoningAdapter.builder())
         .with(TransitionSystemAdapter.builder())
-        .with(MultiObjectTranslator())
+//        .with(MultiObjectTranslator())
 
     initializer.configureStoreBuilder(storeBuilder)
     val store = storeBuilder.build()
