@@ -1,4 +1,5 @@
 #include <pthread.h>
+#include <errno.h>
 extern unsigned long __VERIFIER_nondet_ulong(void);
 extern void abort(void);
 void reach_error(void) { abort(); }
@@ -13,7 +14,7 @@ int main(void) {
   pthread_mutex_t *p = (pthread_mutex_t *)address;
   pthread_mutex_t *other = p == &a ? &b : &a;
   pthread_mutex_lock(p);
-  if (pthread_mutex_trylock(p) == 0) reach_error();
+  if (pthread_mutex_trylock(p) != EBUSY) reach_error();
   if (pthread_mutex_trylock(other) != 0) reach_error();
   pthread_mutex_unlock(other);
   pthread_mutex_unlock(p);
