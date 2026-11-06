@@ -60,6 +60,12 @@ class LocalAddressLifetimeTest {
             arrayOf<Any>(model, "int *", "int *p = &local; int *q = p; return q;", true),
             arrayOf<Any>(model, "int *", "int *p = &local; return &*p;", true),
             arrayOf<Any>(model, "int", "saved = &local; return local;", true),
+            arrayOf<Any>(
+              model,
+              "int",
+              "//scope\n int *p; { int local = 1; p = &local; } return *p;",
+              true,
+            ),
             arrayOf<Any>(model, "int", "*out = &local; return local;", true),
             arrayOf<Any>(model, "int", "escape(&local); return local;", true),
           )
@@ -86,7 +92,7 @@ class LocalAddressLifetimeTest {
       int *saved;
       extern void escape(int *);
       $resultType f(int **out) {
-        int local = 1;
+        ${if (body.startsWith("//scope")) "" else "int local = 1;"}
         $body
       }
       int main(void) { int *p; f(&p); return 0; }
