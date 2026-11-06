@@ -35,6 +35,7 @@ import hu.bme.mit.theta.xcfa.model.XcfaLocation
 import hu.bme.mit.theta.xcfa.utils.getFlatLabels
 import org.antlr.v4.runtime.CharStreams
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 
@@ -107,6 +108,12 @@ class LocalAddressLifetimeTest {
         .buildXcfa(program)
     // Inspect lifetime lowering before simplification can propagate the address or drop its writes.
     for (phase in 0..2) builder.getProcedures().forEach { it.optimize(phase) }
+    if (body.startsWith("__atomic_compare_exchange_n")) {
+      assertTrue(
+        builder.getProcedures().flatMap { it.getVars() }.none { it.name.endsWith("local*") },
+        "lowered CAS must keep its expected value scalar",
+      )
+    }
     fun clearsLocal(expr: Expr<*>): Boolean =
       (expr is ArrayWriteExpr<*, *> &&
         expr.index.toString().contains("local*") &&
