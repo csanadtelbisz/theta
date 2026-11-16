@@ -188,6 +188,36 @@ abstract class RefineryTransitionRuleBuilder<T>(
     }
   }
 
+  /**
+   * Builds the rule(s) setting the target of [pointer] to [newTarget]. The reference is
+   * single-valued and transition actions only overwrite the given tuple, so the old target must be
+   * removed explicitly. If [mayBeUnset], a variant for a pointer without any target is added too.
+   */
+  private fun retargetRules(
+    pointer: String,
+    newTarget: String,
+    parameters: List<Pair<String, String>>,
+    preConditionClauses: Set<String>,
+    otherActions: List<String> = listOf(),
+    mayBeUnset: Boolean = false,
+  ): Set<SingleRefineryRule> {
+    val oldTarget = "old_target"
+    val withOld =
+      SingleRefineryRule(
+        parameters = parameters + ("Pointable" to oldTarget),
+        preConditionClauses = preConditionClauses + "target($pointer, $oldTarget)",
+        actionLiterals =
+          otherActions + listOf("!target($pointer, $oldTarget)", "target($pointer, $newTarget)"),
+      )
+    val withoutOld =
+      SingleRefineryRule(
+        parameters = parameters,
+        preConditionClauses = preConditionClauses + "!target($pointer, _)",
+        actionLiterals = otherActions + "target($pointer, $newTarget)",
+      )
+    return if (mayBeUnset) setOf(withOld, withoutOld) else setOf(withOld)
+  }
+
   /** Return a set of refinery rules for the given transition. */
   abstract fun build(transition: T): Set<RefineryRule>
 
@@ -218,31 +248,35 @@ abstract class RefineryTransitionRuleBuilder<T>(
         val region = "allocated_region"
         val base = "allocated_base"
 
-        SingleRefineryRule(
-          parameters = listOf("Pointer" to pointer, "@new MemoryRegion" to region, "@new MemoryObject" to base),
-          preConditionClauses = commonPreconditions,
-          actionLiterals =
-            listOf(
-              "MemoryRegion::address($region): next_address($env)",
-              "MemoryRegion::size($region): ${expr.size}",
-              "valid($region)",
-              "next_address($ENVIRONMENT): next_address($ENVIRONMENT) + 1",
-              "parts($region, $base)",
-              "offset($base): 0",
-              "target($pointer, $base)",
-            )
-        )
+        retargetRules(
+            pointer = pointer,
+            newTarget = base,
+            parameters =
+              listOf("Pointer" to pointer, "@new MemoryRegion" to region, "@new MemoryObject" to base),
+            preConditionClauses = commonPreconditions,
+            otherActions =
+              listOf(
+                "MemoryRegion::address($region): next_address($env)",
+                "MemoryRegion::size($region): ${expr.size}",
+                "valid($region)",
+                "next_address($ENVIRONMENT): next_address($ENVIRONMENT) + 1",
+                "parts($region, $base)",
+                "offset($base): 0",
+              ),
+          )
+          .single()
       } else {
         NondetRefineryRuleBlock(
           expr
             .getPointerExpr(this)
-            .map { (_, preconditions, pointerExpr, _) ->
+            .flatMap { (_, preconditions, pointerExpr, _) ->
               val target = "target"
               val preconditionsPointer = listOf("target($pointerExpr, $target)")
-              SingleRefineryRule(
+              retargetRules(
+                pointer = pointer,
+                newTarget = target,
                 parameters = listOf("Pointer" to pointer, "Pointable" to target),
                 preConditionClauses = commonPreconditions + preconditions + preconditionsPointer,
-                actionLiterals = listOf("target($pointer, $target)"),
               )
             }
             .toSet()
@@ -299,18 +333,21 @@ abstract class RefineryTransitionRuleBuilder<T>(
     return NondetRefineryRuleBlock(
       exprs
         .flatMap { (exprType, exprPreconditions, exprExpr, exprParams) ->
-          derefs.mapNotNull { (derefType, derefPreconditions, derefExpr, _) ->
+          derefs.flatMap { (derefType, derefPreconditions, derefExpr, _) ->
             when {
-              exprType != derefType -> null
+              exprType != derefType -> setOf()
 
               exprType == POINTER -> {
                 val target = "target"
                 val preconditions =
                   exprPreconditions + derefPreconditions + "target($exprExpr, $target)"
-                SingleRefineryRule(
+                // heap pointers may not have a target yet
+                retargetRules(
+                  pointer = derefExpr,
+                  newTarget = target,
                   parameters = listOf("Pointer" to derefExpr, "Pointable" to target),
                   preConditionClauses = preconditions,
-                  actionLiterals = listOf("target($derefExpr, $target)"),
+                  mayBeUnset = true,
                 )
               }
 
@@ -320,10 +357,12 @@ abstract class RefineryTransitionRuleBuilder<T>(
                 val derefStrippedVar = parameters.find { it.second == derefStripped }?.second ?: derefStripped
                 val ruleParameters = (setOf("Value" to derefStrippedVar) + parameters).toList()
 
-                SingleRefineryRule(
-                  parameters = ruleParameters,
-                  preConditionClauses = exprPreconditions + derefPreconditions,
-                  actionLiterals = listOf("value(${derefStrippedVar}): $exprExpr"),
+                setOf(
+                  SingleRefineryRule(
+                    parameters = ruleParameters,
+                    preConditionClauses = exprPreconditions + derefPreconditions,
+                    actionLiterals = listOf("value(${derefStrippedVar}): $exprExpr"),
+                  )
                 )
               }
 

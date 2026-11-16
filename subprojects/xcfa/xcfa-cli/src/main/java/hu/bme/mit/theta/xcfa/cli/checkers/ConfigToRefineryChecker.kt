@@ -15,17 +15,10 @@
  */
 package hu.bme.mit.theta.xcfa.cli.checkers
 
-import hu.bme.mit.theta.analysis.Trace
 import hu.bme.mit.theta.analysis.algorithm.SafetyChecker
 import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryChecker
-import hu.bme.mit.theta.analysis.expl.ExplState
-import hu.bme.mit.theta.analysis.ptr.PtrState
-import hu.bme.mit.theta.analysis.unit.UnitPrec
 import hu.bme.mit.theta.common.logging.Logger
 import hu.bme.mit.theta.frontend.ParseContext
-import hu.bme.mit.theta.xcfa.analysis.XcfaAction
-import hu.bme.mit.theta.xcfa.analysis.XcfaState
-import hu.bme.mit.theta.xcfa.analysis.proof.LocationInvariants
 import hu.bme.mit.theta.xcfa.analysis.refinery.XcfaRefineryTransitionSystemBuilder
 import hu.bme.mit.theta.xcfa.cli.params.XcfaConfig
 import hu.bme.mit.theta.xcfa.model.XCFA
@@ -35,7 +28,7 @@ fun getRefineryChecker(
   parseContext: ParseContext,
   config: XcfaConfig<*, *>,
   logger: Logger,
-): SafetyChecker<LocationInvariants, Trace<XcfaState<PtrState<ExplState>>, XcfaAction>, UnitPrec> {
+): SafetyChecker<*, *, *> {
   val transitionSystem =
     XcfaRefineryTransitionSystemBuilder(
         xcfa = xcfa,
@@ -43,6 +36,5 @@ fun getRefineryChecker(
         property = config.inputConfig.property.verifiedProperty,
       )
       .build()
-  RefineryChecker(transitionSystem, logger).check()
-  TODO()
+  return RefineryChecker(transitionSystem, logger)
 }

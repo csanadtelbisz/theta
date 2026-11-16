@@ -77,13 +77,16 @@ class XcfaRefineryTransitionSystemBuilder(
 
   override val initialStateDeclarations: List<String>
     get() =
-      super.initialStateDeclarations +
-        listOf(
-          "$LOCATION_DECLARATION($ENVIRONMENT, ${procedure.initLoc.name.refinerified}).",
-          "scope NamedPointer += 0.",
-        ) +
-        variables.map { "${it.name.refinerified}($ENVIRONMENT): 0." } +
-        pointers.flatMap {
+      buildList {
+        addAll(super.initialStateDeclarations)
+        addAll(
+          listOf(
+            "$LOCATION_DECLARATION($ENVIRONMENT, ${procedure.initLoc.name.refinerified}).",
+            "scope NamedPointer += 0.",
+          )
+        )
+        variables.mapTo(this) { "${it.name.refinerified}($ENVIRONMENT): 0." }
+        pointers.flatMapTo(this) {
           val name = it.name.refinerified
           val pointer = "pointer_$name"
           listOf(
@@ -95,6 +98,7 @@ class XcfaRefineryTransitionSystemBuilder(
             "MemoryObject::size($pointer): 4.", // C pointer size
           )
         }
+      }
 
   private val xcfaTransitionBuilder =
     XcfaRefineryTransitionRuleBuilder(locations, variables, pointers)
@@ -142,7 +146,11 @@ class XcfaRefineryTransitionRuleBuilder(
         locations.add(source)
         locations.add(target)
         val locPrecondition = "$loc($env, $Location::$source)"
-        val locActions = listOf("$loc($env, $target)")
+        val locActions =
+          listOfNotNull(
+            if (source != target) "!$loc($env, $Location::$source)" else null,
+            "$loc($env, $target)",
+          )
         rule
           .copy(
             preConditionClauses = setOf(locPrecondition) + rule.preConditionClauses,
