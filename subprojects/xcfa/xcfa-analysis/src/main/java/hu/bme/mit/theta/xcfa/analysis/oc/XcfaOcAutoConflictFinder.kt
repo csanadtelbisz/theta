@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,6 +44,8 @@ internal val SimpleConflictFinder = XcfaOcAutoConflictFinder { events, ppos, rfs
   val po = { from: E, to: E -> if (from.clkId == to.clkId) true else ppos[from.clkId, to.clkId] }
   val flatRfs = rfs.values.flatten().toMutableList()
   val conflicts = mutableListOf<Reason>()
+  // po only depends on the clocks, so the read-from edge between two clocks is searched once
+  val rfBetween = mutableMapOf<Pair<Int, Int>, Reason?>()
 
   fun findSimplePath(from: E, to: E): Reason? {
     if (from.clkId == to.clkId) {
@@ -51,7 +53,12 @@ internal val SimpleConflictFinder = XcfaOcAutoConflictFinder { events, ppos, rfs
       return null
     }
     if (po(from, to)) return PoReason
-    return flatRfs.find { po(from, it.from) && po(it.to, to) }?.let { RelationReason(it) }
+    val clocks = from.clkId to to.clkId
+    if (clocks !in rfBetween) {
+      rfBetween[clocks] =
+        flatRfs.find { po(from, it.from) && po(it.to, to) }?.let { RelationReason(it) }
+    }
+    return rfBetween[clocks]
   }
 
   // Cycle of two RF edges (plus po edges)
@@ -75,7 +82,7 @@ internal val SimpleConflictFinder = XcfaOcAutoConflictFinder { events, ppos, rfs
     val writes = events[v]?.flatMap { it.value }?.filter { it.type == EventType.WRITE } ?: listOf()
     vRfs.forEach { rf ->
       writes
-        .filter { rf.from != it && rf.from.potentialSameMemory(it) }
+        .filter { rf.from != it && rf.to.potentialSameMemory(it) }
         .forEach { w ->
           findSimplePath(w, rf.to)?.let { wRfTo ->
             findSimplePath(rf.from, w)?.let { rfFromW ->
@@ -139,7 +146,7 @@ internal class GenericConflictFinder(private val bound: Int) : XcfaOcAutoConflic
           events[v]?.flatMap { it.value }?.filter { it.type == EventType.WRITE } ?: listOf()
         vRfs.forEach { rf ->
           writes
-            .filter { rf.from != it && rf.from.potentialSameMemory(it) }
+            .filter { rf.from != it && rf.to.potentialSameMemory(it) }
             .forEach { w ->
               if ((rf to w) !in enabledWss) {
                 findPath(w, rf.to)?.let { wRfTo ->

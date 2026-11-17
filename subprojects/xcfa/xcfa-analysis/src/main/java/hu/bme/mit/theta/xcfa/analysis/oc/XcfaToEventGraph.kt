@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,37 +25,69 @@ import hu.bme.mit.theta.core.decl.Decls
 import hu.bme.mit.theta.core.decl.IndexedConstDecl
 import hu.bme.mit.theta.core.decl.VarDecl
 import hu.bme.mit.theta.core.model.ImmutableValuation
-import hu.bme.mit.theta.core.stmt.AssignStmt
-import hu.bme.mit.theta.core.stmt.AssumeStmt
-import hu.bme.mit.theta.core.stmt.HavocStmt
-import hu.bme.mit.theta.core.stmt.MemoryAssignStmt
-import hu.bme.mit.theta.core.stmt.SkipStmt
+import hu.bme.mit.theta.core.stmt.*
 import hu.bme.mit.theta.core.stmt.Stmts.Assign
 import hu.bme.mit.theta.core.type.Expr
+import hu.bme.mit.theta.core.type.LitExpr
 import hu.bme.mit.theta.core.type.Type
 import hu.bme.mit.theta.core.type.abstracttype.AbstractExprs.Eq
+import hu.bme.mit.theta.core.type.abstracttype.EqExpr
 import hu.bme.mit.theta.core.type.anytype.Dereference
+import hu.bme.mit.theta.core.type.anytype.IteExpr
 import hu.bme.mit.theta.core.type.anytype.RefExpr
-import hu.bme.mit.theta.core.type.booltype.BoolExprs.Or
-import hu.bme.mit.theta.core.type.booltype.BoolExprs.True
+import hu.bme.mit.theta.core.type.booltype.AndExpr
+import hu.bme.mit.theta.core.type.booltype.BoolExprs.*
 import hu.bme.mit.theta.core.type.booltype.BoolType
+import hu.bme.mit.theta.core.type.booltype.OrExpr
+import hu.bme.mit.theta.core.type.bvtype.BvType
 import hu.bme.mit.theta.core.type.inttype.IntExprs.Int
 import hu.bme.mit.theta.core.type.inttype.IntType
 import hu.bme.mit.theta.core.utils.ExprSimplifier
 import hu.bme.mit.theta.core.utils.TypeUtils.cast
 import hu.bme.mit.theta.core.utils.indexings.VarIndexingFactory
+import hu.bme.mit.theta.frontend.ParseContext
+import hu.bme.mit.theta.xcfa.ErrorDetection
+import hu.bme.mit.theta.xcfa.ErrorDetection.DATA_RACE
 import hu.bme.mit.theta.xcfa.model.*
+import hu.bme.mit.theta.xcfa.passes.loops.UnrollCut
+import hu.bme.mit.theta.xcfa.utils.MemoryTypeKey
+import hu.bme.mit.theta.xcfa.utils.addressesAtomicData
+import hu.bme.mit.theta.xcfa.utils.collectVarsWithAccessType
 import hu.bme.mit.theta.xcfa.utils.dereferences
 import hu.bme.mit.theta.xcfa.utils.getFlatLabels
+import hu.bme.mit.theta.xcfa.utils.integerOf
+import hu.bme.mit.theta.xcfa.utils.isWritten
+import hu.bme.mit.theta.xcfa.utils.memoryTypeKey
 import hu.bme.mit.theta.xcfa.utils.references
+import java.util.Collections
+import java.util.IdentityHashMap
 
-internal class XcfaToEventGraph(private val xcfa: XCFA) {
+/** Reads with more candidates than this get no value: the union would rarely stay small. */
+private const val MAX_VALUE_SOURCES = 4096
+
+/** The most addresses a read is matched at; a narrowed address may have this many values. */
+private const val MAX_ADDRESSES = 4096
+
+/** Shorter `ite` chains over one term are folded as they are. */
+private const val MIN_TABLE = 8
+
+/** The most addresses a havocked address is tried at (see `narrow`). */
+private const val MAX_NARROWED_DOMAIN = 200_000
+
+internal class XcfaToEventGraph(
+  private val xcfa: XCFA,
+  private val parseContext: ParseContext,
+  private val property: ErrorDetection,
+  private val pruneCandidates: Boolean = false,
+  private val dischargeDeadTargets: Boolean = false,
+) {
 
   init {
     if (xcfa.initProcedures.size > 1) exit("multiple entry points.")
   }
 
   data class EventGraph(
+    val name: String,
     val threads: Set<Thread>,
     val events: Map<VarDecl<*>, Map<Int, List<E>>>,
     val pos: List<R>, // not transitively closed!
@@ -63,9 +95,30 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
     val wss: Map<VarDecl<*>, Set<R>>,
     val violations: List<Violation>, // OR!
     val branchingConditions: List<Expr<BoolType>>,
-    val memoryDecl: VarDecl<IntType>,
-    val memoryGarbage: IndexedConstDecl<IntType>,
-  )
+    val localFlows: List<Expr<BoolType>>, // data flow of procedure-local variables (no events)
+    val edgeGuards: Map<Pair<Int, XcfaEdge>, Expr<BoolType>>, // path guard after each edge
+    val memoryDecls: Set<VarDecl<*>>,
+    val memoryGarbages: Set<IndexedConstDecl<*>>,
+    val unrollExits: List<UnrollExit>,
+  ) {
+
+    override fun toString(): String =
+      proceduresToDot(name, threads.map { it.procedure }) { procedureName, edge ->
+        val thread = threads.find { it.procedure.name == procedureName }
+        " [${
+          events.values
+            .flatMap {
+              if (thread != null) {
+                it[thread.pid] ?: listOf()
+              } else {
+                it.flatMap { e -> e.value }
+              }
+            }
+            .filter { e -> e.pid == (thread?.pid ?: e.pid) && e.edge == edge }
+            .joinToString(",") { it.const.name }
+        }]"
+      }
+  }
 
   private val threads = mutableSetOf<Thread>()
   private var indexing = VarIndexingFactory.indexing(0)
@@ -77,15 +130,231 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
   private var wss = mutableMapOf<VarDecl<*>, MutableSet<R>>()
   private val violations: MutableList<Violation> = mutableListOf()
   private val branchingConditions: MutableList<Expr<BoolType>> = mutableListOf()
+  private val localFlows: MutableList<Expr<BoolType>> = mutableListOf()
+  private val localDefinitions = mutableMapOf<ConstDecl<*>, MutableList<LocalDefinition>>()
+  private val edgeGuards = mutableMapOf<Pair<Int, XcfaEdge>, Expr<BoolType>>()
+  private val unrollExits: MutableList<UnrollExit> = mutableListOf()
 
-  private val memoryDecl: VarDecl<IntType> = Decls.Var("__oc_memory_declaration__", Int())
-  private val memoryGarbage = // the value of this declaration is not constrained
-    memoryDecl.getNewIndexed().also { XcfaEvent.memoryGarbage = it }
+  /**
+   * Per started thread, a global flag its final location sets. A join reads it, so the join is
+   * ordered after the thread by that read -- which, unlike a program-order edge, binds only when
+   * the join executes. See [addJoinOrders].
+   */
+  private val doneVars = mutableMapOf<Int, VarDecl<BoolType>>()
+
+  private class PendingJoin(val finals: Set<E>, val join: E)
+
+  private val joins = mutableListOf<PendingJoin>()
+
+  private val createdKeys = mutableSetOf<Expr<*>>()
+
+  private val racingGlobals: Set<VarDecl<*>> =
+    xcfa.globalVars.filter { !it.threadLocal && !it.atomic }.map { it.wrappedVar }.toSet()
+
+  private val maxPid by lazy {
+    var counter = 1
+    fun explore(proc: XcfaProcedure, startHistory: Set<String>) {
+      proc.edges.forEach { e ->
+        e.getFlatLabels().filterIsInstance<StartLabel>().forEach { s ->
+          if (s.name in startHistory) {
+            exit("recursive thread start")
+          }
+          counter++
+          val procedure =
+            xcfa.procedures.find { it.name == s.name } ?: exit("unknown procedure name: ${s.name}")
+          explore(procedure, startHistory + proc.name)
+        }
+      }
+    }
+
+    val initProc = xcfa.initProcedures.first().first
+    explore(initProc, setOf(initProc.name))
+    counter
+  }
+
+  /**
+   * One memory declaration per [MemoryTypeKey], typed with the partition's element type.
+   *
+   * Partitioning memory declarations by array type, offset type, and expression type as there
+   * should never be data flow between events where any of these differ.
+   */
+  private val memoryDecls: Map<MemoryTypeKey, VarDecl<Type>> = createMemoryDecls()
+
+  /**
+   * Thread-specific data: per thread, a partition of slots addressed by `pthread_key_t` values
+   * (which `pthread_key_create` makes fresh, see CLibraryFunctionsPass). Not a partition of program
+   * memory: a slot used to be the key object's own memory at offset `pid`, which under the flat
+   * model is the absolute address `pid` -- some other object.
+   */
+  private val threadSpecificDecls: Map<Int, VarDecl<Type>> = createThreadSpecificDecls()
+
+  private val memoryDeclSet: Set<VarDecl<*>> =
+    memoryDecls.values.toSet() + threadSpecificDecls.values
+
+  /**
+   * Declarations for initial memory garbage: the values of these declarations are not constrained
+   */
+  private val memoryGarbages: Map<VarDecl<Type>, IndexedConstDecl<Type>> =
+    (memoryDecls.values + threadSpecificDecls.values)
+      .associateWith { it.getNewIndexed() }
+      .also { XcfaEvent.memoryGarbages = it.values.toSet() }
+
+  /**
+   * Whether candidates are chosen by [XcfaOcForwardValues] while the graph is built, instead of all
+   * being created first: under SC with a single thread, where creation order is execution order.
+   * Then a statement is also folded on the values first, and a path whose guard folds to false is
+   * not followed: a deref check's slow path then disappears when its fast path is decided.
+   */
+  private val forward: Boolean by lazy {
+    pruneCandidates && property != DATA_RACE && maxPid == 1 && threadSpecificDecls.isEmpty()
+  }
+
+  private val values = XcfaOcForwardValues()
+
+  /** The variables some label initializes: by a write, or by an assumption on its value. */
+  private val written: Set<VarDecl<*>> by lazy {
+    xcfa.procedures
+      .flatMap { it.edges }
+      .flatMap { it.getFlatLabels() }
+      .flatMap { label ->
+        val assumed = ((label as? StmtLabel)?.stmt as? AssumeStmt)?.cond?.vars.orEmpty()
+        label.collectVarsWithAccessType().filter { (_, a) -> a.isWritten }.keys + assumed
+      }
+      .toSet()
+  }
+
+  private val writeValues = HashMap<E, Set<LitExpr<*>>?>()
+
+  /** Globals that some path reaches unwritten: a read of them may take no write's value. */
+  private val partiallyWritten = mutableSetOf<VarDecl<*>>()
+
+  /** The writes of one memory partition in creation order, indexed by their known address. */
+  private class Writes {
+    val all = mutableListOf<E>()
+    val byAddress = HashMap<Pair<LitExpr<*>, LitExpr<*>>, MutableList<E>>()
+    val offsetsByArray = HashMap<LitExpr<*>, MutableSet<LitExpr<*>>>()
+    val vague = mutableListOf<E>()
+  }
+
+  private val forwardWrites = HashMap<VarDecl<*>, Writes>()
+
+  private fun registerWrite(decl: VarDecl<*>, e: E) {
+    val writes = forwardWrites.getOrPut(decl) { Writes() }
+    writes.all.add(e)
+    val arrays = e.array?.let { values.evaluate(it) }
+    val offsets = e.offset?.let { values.evaluate(it) }
+    if (e.array != null) {
+      e.arrayValues = arrays
+      e.offsetValues = offsets
+    }
+    if (arrays?.size == 1 && offsets?.size == 1) {
+      writes.byAddress.getOrPut(arrays.first() to offsets.first()) { mutableListOf() }.add(e)
+      writes.offsetsByArray.getOrPut(arrays.first()) { LinkedHashSet() }.add(offsets.first())
+    } else {
+      writes.vague.add(e)
+    }
+  }
+
+  /**
+   * The writes a read of [decl] at the given addresses, executed under [guard], may take its value
+   * from, oldest first. A write is not one if a later write to the single address executes whenever
+   * the read does: as both precede the read, that one overwrites it.
+   */
+  private fun forwardCandidates(
+    decl: VarDecl<*>,
+    arrays: Set<LitExpr<*>>?,
+    offsets: Set<LitExpr<*>>?,
+    guard: Set<Expr<BoolType>>,
+  ): List<E> {
+    val writes = forwardWrites[decl] ?: return emptyList()
+    if (arrays == null || offsets == null || arrays.size * offsets.size > MAX_ADDRESSES)
+      return writes.all
+    val addresses = arrays.flatMap { a -> offsets.map { o -> a to o } }
+    val result =
+      (writes.vague.filter { it.mayAccess(arrays, offsets) } +
+          addresses.flatMap { writes.byAddress[it].orEmpty() })
+        .sortedBy { it.id }
+    val cover =
+      addresses
+        .singleOrNull()
+        ?.let { writes.byAddress[it] }
+        ?.lastOrNull { guard.containsAll(it.guard) } ?: return result
+    return result.filter { it.id >= cover.id }
+  }
+
+  private fun E.mayAccess(arrays: Set<LitExpr<*>>, offsets: Set<LitExpr<*>>): Boolean =
+    const in memoryGarbages.values ||
+      (arrayValues?.any { it in arrays } ?: true) && (offsetValues?.any { it in offsets } ?: true)
+
+  private fun writeValue(w: E): Set<LitExpr<*>>? {
+    if (writeValues.containsKey(w)) return writeValues[w]
+    val eq = w.assignment as? EqExpr<*>
+    val value =
+      eq
+        ?.takeIf { (it.leftOp as? RefExpr<*>)?.decl == w.const }
+        ?.rightOp
+        ?.let { values.evaluate(it) }
+    writeValues[w] = value
+    return value
+  }
+
+  /** The values a read takes from [candidates]; unwritten ghost cells read their default. */
+  private fun readValue(candidates: List<E>, array: Expr<*>?): Set<LitExpr<*>>? {
+    if (candidates.isEmpty() || candidates.size > MAX_VALUE_SOURCES) return null
+    var result: Set<LitExpr<*>>? = setOf()
+    for (w in candidates) {
+      val value =
+        if (w.const !in memoryGarbages.values) writeValue(w)
+        else array?.let { parseContext.getGhostMemoryInitialValue(it) }?.let { values.evaluate(it) }
+      result = XcfaOcForwardValues.union(result, value)
+      if (result == null || result.size > XcfaOcForwardValues.MAX_VALUES) return null
+    }
+    return result
+  }
+
+  private val Set<Expr<BoolType>>.dead: Boolean
+    get() = False() in this
+
+  /** Or of the paths' guards, with their common conditions kept outside the disjunction. */
+  private fun mergeGuards(guards: List<Set<Expr<BoolType>>>): Set<Expr<BoolType>> {
+    if (!forward || guards.size <= 1) return guards.toOrInSet()
+    val common = guards.reduce { a, b -> a intersect b }
+    val rests = guards.map { it - common }
+    if (rests.any { it.isEmpty() }) return common
+    return common + Or(rests.map { it.toAnd() })
+  }
 
   fun create(): EventGraph {
-    ThreadProcessor(Thread(procedure = xcfa.initProcedures.first().first), true).process()
+    XcfaEvent.resetIds()
+    Thread.resetIds()
+    ThreadProcessor(Thread.of(xcfa.initProcedures.first().first, parseContext), true).process()
     addCrossThreadRelations()
+    addJoinOrders()
+    val allEvents = events.values.flatMap { it.values.flatten() }
+    val before = closePo(allEvents, pos)
+    // RF-Some would make a read take such a candidate, ruling out every execution: a read that no
+    // write can precede is simply unconstrained.
+    rfs.values.forEach { rels -> rels.removeIf { before[it.from]?.get(it.to.id) == true } }
+    // the forward values already chose the candidates; the fixpoint would redo it at great cost
+    if (pruneCandidates && !forward) {
+      val analysis =
+        XcfaOcValueAnalysis(
+          allEvents,
+          before,
+          rfs,
+          wss,
+          localDefinitions,
+          memoryGarbages.values.toSet(),
+          parseContext.isCheckMemsafety,
+        )
+      analysis.prune().forEach { localFlows.add(Not(it.toAnd())) }
+      if (dischargeDeadTargets) {
+        violations.removeIf { analysis.isCertainlyFalse(it.guard) }
+        unrollExits.removeIf { analysis.isCertainlyFalse(it.guard) }
+      }
+    }
     return EventGraph(
+      xcfa.name,
       threads,
       events,
       pos,
@@ -93,49 +362,161 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
       wss,
       violations,
       branchingConditions,
-      memoryDecl,
-      memoryGarbage,
+      localFlows,
+      edgeGuards,
+      memoryDeclSet,
+      memoryGarbages.values.toSet(),
+      unrollExits,
     )
   }
 
+  /**
+   * Collects the partitions occurring in the XCFA and creates a memory declaration for each.
+   *
+   * Up front rather than lazily: every partition needs an unconstrained initial write that is
+   * program-order-before all other events, and such an event can only be created while the entry
+   * thread is being set up.
+   */
+  private fun createMemoryDecls(): Map<MemoryTypeKey, VarDecl<Type>> {
+    val keys = mutableSetOf<MemoryTypeKey>()
+    xcfa.procedures.forEach { procedure ->
+      procedure.edges.forEach { edge ->
+        edge.label.dereferences.forEach { keys.add(it.memoryTypeKey) }
+      }
+    }
+    val names = mutableSetOf<String>()
+    // sorted so that the generated names do not depend on traversal order
+    return keys
+      .sortedBy { it.toString() }
+      .associateWith { key ->
+        var name = "__theta_oc_memory_declaration__${key.sanitizedName}"
+        while (!names.add(name)) name += "_" // types with equal sanitized names (should not happen)
+        Decls.Var(name, key.elemType)
+      }
+  }
+
+  private fun createThreadSpecificDecls(): Map<Int, VarDecl<Type>> {
+    val labels =
+      xcfa.procedures
+        .flatMap { it.edges }
+        .flatMap { it.getFlatLabels() }
+        .filterIsInstance<InvokeLabel>()
+    // the slots hold `void *` values: the result of a get, the value of a set
+    val types =
+      labels
+        .mapNotNull {
+          when (it.name) {
+            "pthread_getspecific" -> it.params[0].type
+            "pthread_setspecific" -> it.params[2].type
+            else -> null
+          }
+        }
+        .toSet()
+    if (types.size > 1) exit("thread-specific values of different types: $types")
+    val type = types.singleOrNull() ?: return mapOf()
+    return (0 until maxPid).associateWith { Decls.Var("__theta_oc_thread_specific_$it", type) }
+  }
+
+  private val Dereference<*, *, *>.memoryDecl: VarDecl<Type>
+    get() =
+      memoryDecls[memoryTypeKey]
+        ?: exit("dereference of an unregistered type: $memoryTypeKey ($this)")
+
   private fun addCrossThreadRelations() {
+    val locals = localVars.values.flatMap { it.values }.toSet()
     for ((v, map) in events) {
-      if (map.values.all { it.all { e -> e.assignment == null } })
+      // an initialization on a path the forward values rule out has no event: the reads it could
+      // bind follow it on that path
+      if (map.values.all { it.all { e -> e.assignment == null } } && !(forward && v in written))
         exit("variable $v is not initialized")
+      // the only cross-thread local accesses are thread parameters, passed in localFlows
+      if (v in locals) continue
       for ((pid1, list1) in map) for ((pid2, list2) in map) if (pid1 != pid2)
         for (e1 in list1.filter { it.type == WRITE }) for (e2 in list2) {
+          // statically different addresses never alias: no relation between them
+          if (!e1.potentialSameMemory(e2)) continue
           if (e2.type == READ) rfs.add(RelationType.RF, e1, e2)
           if (e2.type == WRITE) wss.add(RelationType.WS, e1, e2)
         }
     }
   }
 
+  /**
+   * Orders a joined thread's final events before the join only when every event after the join
+   * implies that it executed: [pos] is closed statically, so after `if (c) pthread_join(t, 0);` an
+   * unconditional order would put the merged path after `t` even when the join did not run. A
+   * conditional join is ordered by the read of the thread's done flag instead.
+   */
+  private fun addJoinOrders() {
+    val successors = pos.groupBy({ it.from }, { it.to })
+    for ((finals, join) in joins.map { it.finals to it.join }) {
+      val seen = mutableSetOf(join)
+      val todo = ArrayDeque(listOf(join))
+      var unconditional = true
+      val implied = join.guard.associateWith { mutableMapOf<Expr<BoolType>, Boolean>() }
+      while (unconditional && todo.isNotEmpty()) {
+        val e = todo.removeFirst()
+        if (!implied.all { (c, memo) -> e.guard.any { it.implies(c, memo) } }) unconditional = false
+        successors[e]?.forEach { if (seen.add(it)) todo.add(it) }
+      }
+      if (unconditional) finals.forEach { po(it, join) }
+    }
+  }
+
+  /**
+   * A structural (incomplete, but sound) check that [this] implies [c]: merges after the join wrap
+   * its guard in an `Or` of the branches, each of which still conjoins it.
+   */
+  private fun Expr<BoolType>.implies(
+    c: Expr<BoolType>,
+    memo: MutableMap<Expr<BoolType>, Boolean>,
+  ): Boolean =
+    this == c ||
+      memo.getOrPut(this) {
+        when (this) {
+          is AndExpr -> ops.any { it.implies(c, memo) }
+          is OrExpr -> ops.all { it.implies(c, memo) }
+          else -> false
+        }
+      }
+
   private inner class ThreadProcessor(
     private val thread: Thread,
     addMemoryGarbage: Boolean = false,
+    private val initialLocalValues: Map<VarDecl<*>, IndexedConstDecl<*>> = mapOf(),
   ) {
 
     private val pid = thread.pid
     private var last = listOf<E>()
     private var guard = setOf<Expr<BoolType>>()
     private lateinit var lastWrites: MutableMap<VarDecl<*>, Set<E>>
-    private val memoryWrites = mutableSetOf<E>()
+
+    // SSA value of each thread-local variable: local reads are bound to it instead of rf edges
+    private lateinit var localValues: MutableMap<VarDecl<*>, IndexedConstDecl<*>>
+    private val memoryWrites = mutableMapOf<VarDecl<*>, MutableSet<E>>()
+
+    /** A thread-specific slot access being processed, and the partition it belongs to. */
+    private var threadSpecificSlot: Pair<Dereference<*, *, *>, VarDecl<Type>>? = null
     private lateinit var edge: XcfaEdge
     private var inEdge = false
     private var atomicBlock: Int? = null
     private val multipleUsePidVars = mutableSetOf<VarDecl<*>>()
 
+    // accesses synthesised for a library call are not program accesses: they do not race
+    private var inLibraryCall = false
+
     init {
       if (addMemoryGarbage) {
         val firstEdge = thread.procedure.initLoc.outgoingEdges.first()
-        val e = E(memoryGarbage, WRITE, setOf(), pid, firstEdge, E.uniqueClkId())
-        e.assignment = True()
-        memoryWrites.add(e)
-        events
-          .getOrPut(memoryDecl) { mutableMapOf() }
-          .getOrPut(thread.pid) { mutableListOf() }
-          .add(e)
-        last = listOf(e)
+        last =
+          memoryGarbages.map { (decl, garbage) ->
+            val e = E(garbage, WRITE, setOf(), pid, firstEdge, E.uniqueClkId())
+            e.assignment = True()
+            memoryWrites.getOrPut(decl) { mutableSetOf() }.add(e)
+            if (forward) registerWrite(decl, e)
+            events.getOrPut(decl) { mutableMapOf() }.getOrPut(thread.pid) { mutableListOf() }.add(e)
+            e
+          }
       }
     }
 
@@ -149,14 +530,305 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
           else -> E.uniqueClkId()
         }
       val e = E(decl.getNewIndexed(), type, guard, pid, edge, clkId)
+      e.inAtomicBlock = atomicBlock != null
+      e.raceCandidate = property == DATA_RACE && !inLibraryCall && d in racingGlobals
       last.forEach { po(it, e) }
       inEdge = true
+      val local = decl != d
       when (type) {
-        READ -> lastWrites[decl]?.forEach { rfs.add(RelationType.RF, it, e) }
-        WRITE -> lastWrites[decl] = setOf(e)
+        READ ->
+          if (local) {
+            localValues[decl]?.let { localFlows.add(Imply(e.guardExpr, Eq(e.const.ref, it.ref))) }
+          } else {
+            lastWrites[decl]?.forEach { rfs.add(RelationType.RF, it, e) }
+            if (forward) values.define(e.const, globalValue(decl))
+          }
+        WRITE -> {
+          lastWrites[decl] = setOf(e)
+          if (local) localValues[decl] = e.const
+        }
       }
       events.getOrPut(decl) { mutableMapOf() }.getOrPut(pid) { mutableListOf() }.add(e)
       return listOf(e)
+    }
+
+    /**
+     * Procedure-local variables (each thread's own copy) have no events: a read is the variable's
+     * current SSA value, a write a fresh constant bound to the written value under the path guard.
+     * Thread handles keep their events in [StartLabel] / [JoinLabel], which order the threads.
+     */
+    private fun VarDecl<*>.isLocal(varPid: Int = pid) = threadVar(varPid) != this
+
+    private fun localRead(d: VarDecl<*>): IndexedConstDecl<*> {
+      val decl = d.threadVar(pid)
+      // an unwritten local has some (unconstrained) value, the same at every read
+      return localValues.getOrPut(decl) { decl.getNewIndexed() }
+    }
+
+    private fun localWrite(d: VarDecl<*>, value: Expr<*>?, varPid: Int = pid) {
+      val decl = d.threadVar(varPid)
+      val const = decl.getNewIndexed()
+      if (value != null) localFlows.add(underGuard(Eq(const.ref, value)))
+      localDefinitions.getOrPut(const) { mutableListOf() }.add(LocalDefinition(guard, value))
+      localValues[decl] = const
+      if (forward && value != null) values.define(const, values.evaluate(value))
+    }
+
+    private fun underGuard(e: Expr<BoolType>): Expr<BoolType> =
+      if (guard.isEmpty()) e else Imply(guard.toAnd(), e)
+
+    /** Forgets the incoming paths that cannot execute; one is kept if none can. */
+    private fun SearchItem.dropDeadPaths() {
+      if (guards.size <= 1 || loc.initial) return
+      val live = guards.indices.filter { !guards[it].dead }.ifEmpty { listOf(0) }
+      if (live.size == guards.size) return
+      fun <T> MutableList<T>.keep() {
+        val kept = live.map { this[it] }
+        clear()
+        addAll(kept)
+      }
+      guards.keep()
+      lastWrites.keep()
+      localValues.keep()
+      threadLookups.keep()
+      atomics.keep()
+    }
+
+    private fun mergeWrites(current: SearchItem): MutableMap<VarDecl<*>, Set<E>> {
+      val merged = current.lastWrites.merge().toMutableMap()
+      if (forward && current.lastWrites.size > 1) {
+        merged.keys.forEach { v ->
+          if (current.lastWrites.any { v !in it }) partiallyWritten.add(v)
+        }
+      }
+      return merged
+    }
+
+    private fun globalValue(decl: VarDecl<*>): Set<LitExpr<*>>? {
+      if (decl in partiallyWritten) return null
+      val writes = lastWrites[decl]?.takeIf { it.isNotEmpty() } ?: return null
+      return writes.fold(setOf<LitExpr<*>>() as Set<LitExpr<*>>?) { acc, w ->
+        XcfaOcForwardValues.union(acc, writeValue(w))
+      }
+    }
+
+    private inner class Folded(val expr: Expr<*>, val values: Set<LitExpr<*>>?)
+
+    /** `ite(t == k1, v1, ite(t == k2, v2, ... rest))`, as a lookup by the value of `t`. */
+    private inner class Table(
+      val term: Expr<*>,
+      val cases: Map<LitExpr<*>, Expr<*>>,
+      val rest: Expr<*>,
+    )
+
+    /** The tables of the statement being folded; cleared per statement, as they are large. */
+    private val tables = IdentityHashMap<Expr<*>, Table?>()
+
+    private fun tableOf(ite: IteExpr<*>): Table? {
+      if (tables.containsKey(ite)) return tables[ite]
+      var term: Expr<*>? = null
+      val cases = HashMap<LitExpr<*>, Expr<*>>()
+      var node: Expr<*> = ite
+      while (node is IteExpr<*>) {
+        val cond = node.cond as? EqExpr<*> ?: break
+        val (key, t) =
+          when {
+            cond.rightOp is LitExpr<*> -> cond.rightOp as LitExpr<*> to cond.leftOp
+            cond.leftOp is LitExpr<*> -> cond.leftOp as LitExpr<*> to cond.rightOp
+            else -> break
+          }
+        if (term == null) term = t else if (t != term) break
+        cases.putIfAbsent(key, node.then)
+        node = node.`else`
+      }
+      val table = if (term == null || cases.size < MIN_TABLE) null else Table(term, cases, node)
+      tables[ite] = table
+      return table
+    }
+
+    /** While set, this variable holds none of [otherDomain]: a read there finds no known write. */
+    private var otherAddress: VarDecl<*>? = null
+    private var otherDomain: Set<LitExpr<*>> = setOf()
+
+    /**
+     * Narrows the values of [x], havocked just before `assume([cond])`: every use of it follows the
+     * assumption, so it only takes values that may satisfy it. It is tried at each value of what it
+     * is compared with and each address a write to the memory it addresses may have, and once as
+     * any other value, at which those comparisons fail and the cells hold what the initial writes
+     * and those of unknown address leave.
+     */
+    private fun narrow(x: VarDecl<*>, cond: Expr<BoolType>) {
+      tables.clear()
+      val const = localValues[x.threadVar(pid)] ?: return
+      if (values.valueOf(const) != null) return
+      val cells = cond.dereferences.filter { (it.offset as? RefExpr<*>)?.decl == x }
+      val domain = LinkedHashSet<LitExpr<*>>()
+      collectComparedLiterals(cond, x, domain, Collections.newSetFromMap(IdentityHashMap()))
+      if (cells.isEmpty() && domain.isEmpty()) return
+      for (cell in cells) {
+        val arrays = fold(cell.array, IdentityHashMap()).values ?: return
+        val writes = forwardWrites[cell.memoryDecl] ?: continue
+        arrays.forEach { a -> writes.offsetsByArray[a]?.let { domain.addAll(it) } }
+        writes.vague.forEach { w ->
+          if (w.arrayValues?.any { it in arrays } != false)
+            w.offsetValues?.let { domain.addAll(it) }
+        }
+        if (domain.size > MAX_NARROWED_DOMAIN) return
+      }
+      val condition = fold(cond, IdentityHashMap()).expr
+      otherAddress = x
+      otherDomain = domain
+      val other =
+        try {
+          fold(condition, IdentityHashMap()).values
+        } finally {
+          otherAddress = null
+          otherDomain = setOf()
+        }
+      if (other != XcfaOcForwardValues.FALSE) return
+      val possible = LinkedHashSet<LitExpr<*>>()
+      for (address in domain) {
+        values.define(const, setOf(address))
+        if (fold(condition, IdentityHashMap()).values != XcfaOcForwardValues.FALSE) {
+          possible.add(address)
+          if (possible.size > MAX_ADDRESSES) break
+        }
+      }
+      if (possible.isEmpty() || possible.size > MAX_ADDRESSES) values.forget(const)
+      else values.define(const, possible)
+    }
+
+    /** [this] with every term of a known value replaced by it, on the current state. */
+    @Suppress("UNCHECKED_CAST")
+    private fun Stmt.folded(): Stmt {
+      tables.clear()
+      val memo = IdentityHashMap<Expr<*>, Folded>()
+      return when (this) {
+        is AssignStmt<*> ->
+          AssignStmt.of(varDecl as VarDecl<Type>, cast(fold(expr, memo).expr, varDecl.type))
+        is AssumeStmt -> AssumeStmt.of(cast(fold(cond, memo).expr, Bool()))
+        is MemoryAssignStmt<*, *, *> ->
+          MemoryAssignStmt.of(
+            deref.withOps(deref.ops.map { fold(it, memo).expr }) as Dereference<Type, Type, Type>,
+            cast(fold(expr, memo).expr, deref.type) as Expr<Type>,
+          )
+        else -> this
+      }
+    }
+
+    private fun fold(expr: Expr<*>, memo: IdentityHashMap<Expr<*>, Folded>): Folded =
+      memo.getOrPut(expr) {
+        when (expr) {
+          is LitExpr<*> -> Folded(expr, setOf(expr))
+          is RefExpr<*> -> literalOr(expr, refValue(expr))
+          is Dereference<*, *, *> -> {
+            val ops = expr.ops.map { fold(it, memo) }
+            val rebuilt = expr.withOps(ops.map { it.expr })
+            val decl = expr.memoryDecl
+            val arrays = ops[0].values
+            val candidates =
+              if (otherAddress != null && (expr.offset as? RefExpr<*>)?.decl == otherAddress)
+              // the domain holds the known offsets of the vague writes too
+              forwardWrites[decl]?.vague?.filter {
+                  it.offsetValues == null &&
+                    (arrays == null || it.arrayValues?.any { a -> a in arrays } ?: true)
+                } ?: emptyList()
+              else forwardCandidates(decl, arrays, ops[1].values, guard)
+            val value =
+              if (candidates === forwardWrites[decl]?.all) null
+              else readValue(candidates, ops[0].expr)
+            literalOr(rebuilt, value)
+          }
+          else -> {
+            if (expr.ops.isEmpty()) return@getOrPut Folded(expr, null)
+            if (expr is IteExpr<*>) {
+              tableOf(expr)?.let { table ->
+                val key = fold(table.term, memo)
+                val value = key.values?.singleOrNull()
+                if (value != null) return@getOrPut fold(table.cases[value] ?: table.rest, memo)
+                if (otherAddress != null && (table.term as? RefExpr<*>)?.decl == otherAddress)
+                  return@getOrPut fold(table.rest, memo).let { rest ->
+                    // the cases cover the domain, which the variable avoids
+                    if (table.cases.keys.all { it in otherDomain }) rest else Folded(expr, null)
+                  }
+              }
+            }
+            if (otherAddress != null && expr is EqExpr<*>) {
+              val (a, b) = expr.leftOp to expr.rightOp
+              val other =
+                when (otherAddress) {
+                  (a as? RefExpr<*>)?.decl -> b
+                  (b as? RefExpr<*>)?.decl -> a
+                  else -> null
+                }
+              if (other != null && fold(other, memo).values?.all { it in otherDomain } == true)
+                return@getOrPut Folded(False(), XcfaOcForwardValues.FALSE)
+            }
+            val ops = expr.ops.map { fold(it, memo) }
+            val value = values.combine(expr, ops.map { it.values })
+            val exprs = ops.map { it.expr }
+            val simplified =
+              when (expr) {
+                is OrExpr ->
+                  if (exprs.any { it == True() }) True()
+                  else
+                    exprs
+                      .filter { it != False() }
+                      .let { if (it.isEmpty()) False() else Or(it as List<Expr<BoolType>>) }
+                is AndExpr ->
+                  if (exprs.any { it == False() }) False()
+                  else
+                    exprs
+                      .filter { it != True() }
+                      .let { if (it.isEmpty()) True() else And(it as List<Expr<BoolType>>) }
+                is IteExpr<*> ->
+                  when (exprs[0]) {
+                    True() -> exprs[1]
+                    False() -> exprs[2]
+                    else -> expr.withOps(exprs)
+                  }
+                else ->
+                  if (exprs.indices.all { exprs[it] === expr.ops[it] }) expr
+                  else expr.withOps(exprs)
+              }
+            literalOr(simplified, value)
+          }
+        }
+      }
+
+    private fun collectComparedLiterals(
+      expr: Expr<*>,
+      x: VarDecl<*>,
+      result: MutableSet<LitExpr<*>>,
+      seen: MutableSet<Expr<*>>,
+    ) {
+      if (!seen.add(expr)) return
+      if (expr is EqExpr<*>) {
+        val (a, b) = expr.leftOp to expr.rightOp
+        if ((a as? RefExpr<*>)?.decl == x)
+          fold(b, IdentityHashMap()).values?.let { result.addAll(it) }
+        if ((b as? RefExpr<*>)?.decl == x)
+          fold(a, IdentityHashMap()).values?.let { result.addAll(it) }
+      }
+      expr.ops.forEach { collectComparedLiterals(it, x, result, seen) }
+    }
+
+    private fun refValue(ref: RefExpr<*>): Set<LitExpr<*>>? =
+      when (val decl = ref.decl) {
+        is ConstDecl<*> -> values.valueOf(decl)
+        is VarDecl<*> ->
+          if (decl == otherAddress) null
+          else if (decl.isLocal()) localValues[decl.threadVar(pid)]?.let { values.valueOf(it) }
+          else globalValue(decl)
+        else -> null
+      }
+
+    private fun literalOr(expr: Expr<*>, value: Set<LitExpr<*>>?): Folded {
+      val literal = value?.singleOrNull()
+      val foldable =
+        literal != null &&
+          (literal.type is BoolType || literal.type is BvType || literal.type is IntType)
+      return Folded(if (foldable) literal!! else expr, value)
     }
 
     private fun memoryEvent(
@@ -166,6 +838,8 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
       useProvidedConst: Boolean = false,
     ): List<E> {
       check(!inEdge || last.size == 1)
+      val decl =
+        threadSpecificSlot?.takeIf { (slot, _) -> slot === deref }?.second ?: deref.memoryDecl
       val array = deref.array.with(consts)
       val offset = deref.offset.with(consts)
       val clkId =
@@ -178,16 +852,42 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
         if (useProvidedConst && deref in consts) {
           consts[deref]!!
         } else {
-          memoryDecl.getNewIndexed()
+          decl.getNewIndexed()
         }
       val e = E(const, type, guard, pid, edge, clkId, array, offset)
+      e.inAtomicBlock = atomicBlock != null
+      e.raceCandidate =
+        property == DATA_RACE &&
+          !inLibraryCall &&
+          // a ghost cell is no program memory
+          parseContext.getGhostMemoryInitialValue(deref.array) == null &&
+          // an address that cannot be resolved is not known to be atomic: keep it as a candidate
+          runCatching { !deref.addressesAtomicData(xcfa.globalVars, parseContext) }
+            .getOrDefault(true)
       last.forEach { po(it, e) }
       inEdge = true
       when (type) {
-        READ -> memoryWrites.forEach { rfs.add(RelationType.RF, it, e) }
-        WRITE -> memoryWrites.add(e)
+        // only same-partition writes can be observed (see MemoryTypeKey)
+        READ ->
+          if (forward) {
+            e.arrayValues = array.let { values.evaluate(it) }
+            e.offsetValues = offset.let { values.evaluate(it) }
+            val all = forwardCandidates(decl, e.arrayValues, e.offsetValues, guard)
+            val candidates = all.filter { it.potentialSameMemory(e) }
+            candidates.forEach { rfs.add(RelationType.RF, it, e) }
+            val readV = readValue(candidates, array)
+            values.define(e.const, readV)
+          } else {
+            memoryWrites[decl]?.forEach {
+              if (it.potentialSameMemory(e)) rfs.add(RelationType.RF, it, e)
+            }
+          }
+        WRITE -> {
+          memoryWrites.getOrPut(decl) { mutableSetOf() }.add(e)
+          if (forward) registerWrite(decl, e)
+        }
       }
-      events.getOrPut(memoryDecl) { mutableMapOf() }.getOrPut(pid) { mutableListOf() }.add(e)
+      events.getOrPut(decl) { mutableMapOf() }.getOrPut(pid) { mutableListOf() }.add(e)
       return listOf(e)
     }
 
@@ -197,8 +897,12 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
     ): Map<Any, IndexedConstDecl<*>> {
       val mutConsts = consts?.toMutableMap() ?: mutableMapOf()
       vars.forEach {
-        last = event(it, READ)
-        if (!useProvidedConst) mutConsts[it] = last.first().const
+        if (it.isLocal()) {
+          if (!useProvidedConst) mutConsts[it] = localRead(it)
+        } else {
+          last = event(it, READ)
+          if (!useProvidedConst) mutConsts[it] = last.first().const
+        }
       }
       dereferences.forEach {
         last = memoryEvent(it, mutConsts, READ, useProvidedConst)
@@ -216,6 +920,7 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
             guards.add(thread.guard)
             thread.startEvent?.let { lastEvents.add(it) }
             this.lastWrites.add(thread.lastWrites)
+            localValues.add(initialLocalValues)
             lastEvents.addAll(last)
           }
         )
@@ -223,6 +928,7 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
       while (toVisit.isNotEmpty()) {
         val current = toVisit.first()
         toVisit.remove(current)
+
         check(current.incoming == current.loc.incomingEdges.size)
         check(current.incoming == current.guards.size || current.loc.initial)
         // lastEvents intentionally skipped
@@ -230,26 +936,68 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
         check(current.incoming == current.threadLookups.size)
         check(current.incoming == current.atomics.size)
         check(
-          current.atomics.all { it == current.atomics.first() } ||
-            current.loc.error ||
-            (current.loc.outgoingEdges.let {
-              it.size == 1 &&
-                it.first().let { e -> e.label.getFlatLabels().isEmpty() && e.target.error }
-            })
-        )
+          current.atomics.all { it == current.atomics.first() } || current.loc.isTerminalSink()
+        ) {
+          "incoming paths disagree on atomic nesting at ${current.loc.name}: ${current.atomics}"
+        }
+
+        if (forward) {
+          current.dropDeadPaths()
+          // an edge without events passes its predecessors on, so they reach a merge repeatedly
+          val lastEvents = current.lastEvents.distinct()
+          current.lastEvents.clear()
+          current.lastEvents.addAll(lastEvents)
+        }
+        val unreachable = forward && current.guards.all { it.dead }
 
         if (current.loc.error) {
+          if (unreachable) continue
           val errorGuard = Or(current.guards.map { it.toAnd() })
           violations.add(Violation(current.loc, pid, errorGuard, current.lastEvents))
           continue
         }
 
-        if (current.loc.final) {
-          thread.finalEvents.addAll(current.lastEvents)
+        UnrollCut.keyOf(current.loc)?.let { key ->
+          if (unreachable) continue
+          unrollExits.add(UnrollExit(key, pid, Or(current.guards.map { it.toAnd() })))
+          continue
         }
 
-        val mergedGuard = current.guards.toOrInSet()
+        if (current.loc.final) {
+          val doneEdge = current.loc.incomingEdges.firstOrNull()
+          if (thread.pidVar != null && doneEdge != null) {
+            val done = doneVars.getOrPut(pid) { Decls.Var("__theta_oc_thread_done_$pid", Bool()) }
+            edge = doneEdge
+            inEdge = false
+            atomicBlock = current.atomics.firstOrNull()
+            last = current.lastEvents
+            guard = mergeGuards(current.guards)
+            lastWrites = mergeWrites(current)
+            val write = event(done, WRITE).first()
+            write.assignment = True()
+            thread.finalEvents.add(write)
+          } else {
+            thread.finalEvents.addAll(current.lastEvents)
+          }
+        }
+
+        val mergedGuard = mergeGuards(current.guards)
+        val mergedLocalValues = mergeLocalValues(current)
         val assumeConsts = mutableMapOf<Any, MutableList<ConstDecl<*>>>()
+        // the branch conditions are folded on the state before any branch, so that the branches
+        // read the same values of the same terms
+        val foldedConditions =
+          if (!forward || unreachable || current.loc.outgoingEdges.size <= 1) mapOf()
+          else {
+            guard = mergedGuard
+            lastWrites = mergeWrites(current)
+            localValues = mergedLocalValues.toMutableMap()
+            current.loc.outgoingEdges.associateWith { e ->
+              ((e.getFlatLabels().firstOrNull() as? StmtLabel)?.stmt as? AssumeStmt)?.let {
+                it.folded()
+              }
+            }
+          }
 
         for (e in current.loc.outgoingEdges) {
           edge = e
@@ -257,7 +1005,8 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
           last = current.lastEvents
           // intersection of guards of incoming edges:
           guard = mergedGuard
-          lastWrites = current.lastWrites.merge().toMutableMap()
+          lastWrites = mergeWrites(current)
+          localValues = mergedLocalValues.toMutableMap()
           val threadLookup =
             current.threadLookups
               .merge { s1, s2 ->
@@ -265,15 +1014,42 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
               }
               .toMutableMap()
           var firstLabel = true
+          var leadingAssume = true
           atomicBlock = current.atomics.firstOrNull()
 
-          edge.getFlatLabels().forEach { label ->
+          var havocked: VarDecl<*>? = null
+          for (label in edge.getFlatLabels()) {
+            if (forward && guard.dead) break
             if (label.references.isNotEmpty()) exit("references")
+            leadingAssume = leadingAssume && label is StmtLabel && label.stmt is AssumeStmt
+            val justHavocked = havocked
+            havocked = null
             when (label) {
               is StmtLabel -> {
-                when (val stmt = label.stmt) {
+                val original = label.stmt
+                if (original is AssumeStmt && justHavocked != null)
+                  narrow(justHavocked, original.cond)
+                if (forward && original is HavocStmt<*> && original.varDecl.isLocal())
+                  havocked = original.varDecl
+                val stmt =
+                  when {
+                    !forward -> label.stmt
+                    firstLabel && foldedConditions[e] != null -> foldedConditions[e]!!
+                    else -> label.stmt.folded()
+                  }
+                // a condition known to hold restricts nothing (a branch still needs its assume)
+                if (
+                  forward &&
+                    stmt is AssumeStmt &&
+                    stmt.cond == True() &&
+                    edge.source.outgoingEdges.size == 1
+                ) {
+                  firstLabel = false
+                  continue
+                }
+                when (stmt) {
                   is AssignStmt<*> -> stmt.process()
-                  is AssumeStmt -> stmt.process(assumeConsts, firstLabel)
+                  is AssumeStmt -> stmt.process(assumeConsts, firstLabel, leadingAssume)
                   is HavocStmt<*> -> stmt.process()
                   is MemoryAssignStmt<*, *, *> -> stmt.process()
                   is SkipStmt -> {}
@@ -291,12 +1067,15 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
             firstLabel = false
           }
 
+          edgeGuards[pid to edge] = guard.toAnd()
+
           val searchItem =
             waitList.find { it.loc == edge.target }
               ?: SearchItem(edge.target).apply { waitList.add(this) }
           searchItem.guards.add(guard)
           searchItem.lastEvents.addAll(last)
           searchItem.lastWrites.add(lastWrites)
+          searchItem.localValues.add(localValues)
           searchItem.threadLookups.add(threadLookup)
           searchItem.atomics.add(atomicBlock)
           searchItem.incoming++
@@ -308,25 +1087,109 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
 
         if (current.loc.outgoingEdges.size > 1) {
           for (e in current.loc.outgoingEdges) {
-            val first = e.getFlatLabels().first()
+            val labels = e.getFlatLabels()
+            // A label-less edge is semantically assume(true): it contributes no condition, so the
+            // guard simply carries over unchanged, which is what the loop above already did. Only a
+            // branch that *starts with something other than a condition* is unsupported.
+            if (labels.isEmpty()) continue
+            val first = labels.first()
             if (first !is StmtLabel || first.stmt !is AssumeStmt) {
-              exit("branching with non-assume labels")
+              exit("branching with non-assume labels (${first::class.simpleName}: $first)")
             }
           }
           assumeConsts.forEach { (_, set) ->
             for ((i1, v1) in set.withIndex()) for ((i2, v2) in set.withIndex()) {
               if (i1 == i2) break
-              branchingConditions.add(Eq(v1.ref, v2.ref))
+              // the constants in the different branches must be equal
+              if (v1 != v2) branchingConditions.add(Eq(v1.ref, v2.ref))
             }
           }
         }
       }
 
-      if (waitList.isNotEmpty()) exit("loops and dangling edges")
+      if (waitList.isNotEmpty())
+        exit(
+          "loops and dangling edges (stuck at ${waitList.joinToString(", ", limit = 5) { item ->
+            "${item.loc.name}[${item.incoming}/${item.loc.incomingEdges.size}]"
+          }})"
+        )
+    }
+
+    /**
+     * Merges the local values reaching [current] from its incoming paths: a variable whose value
+     * differs between them gets a fresh constant equal to its value on the path taken (left
+     * unconstrained by a path on which it is unassigned).
+     */
+    private fun mergeLocalValues(current: SearchItem): Map<VarDecl<*>, IndexedConstDecl<*>> {
+      val incoming = current.localValues
+      if (incoming.size <= 1) return incoming.firstOrNull() ?: mapOf()
+      check(incoming.size == current.guards.size)
+      val merged = mutableMapOf<VarDecl<*>, IndexedConstDecl<*>>()
+      for (v in incoming.flatMap { it.keys }.toSet()) {
+        val values = incoming.map { it[v] }
+        val first = values.first()
+        if (first != null && values.all { it == first }) {
+          merged[v] = first
+          continue
+        }
+        val phi = v.getNewIndexed()
+        localDefinitions[phi] =
+          current.guards
+            .zip(values)
+            .map { (g, value) -> LocalDefinition(g, value?.ref) }
+            .toMutableList()
+        val options =
+          current.guards.zip(values).map { (g, value) ->
+            if (value == null) g.toAnd() else And(g.toAnd(), Eq(phi.ref, value.ref))
+          }
+        localFlows.add(Imply(current.guards.toOrInSet().toAnd(), Or(options)))
+        merged[v] = phi
+        if (forward) {
+          val forwardValues = this@XcfaToEventGraph.values
+          forwardValues.define(
+            phi,
+            values.fold(setOf<LitExpr<*>>() as Set<LitExpr<*>>?) { acc, value ->
+              XcfaOcForwardValues.union(acc, value?.let { forwardValues.valueOf(it) })
+            },
+          )
+        }
+      }
+      return merged
+    }
+
+    /**
+     * A location an execution cannot leave except into the error location, or cannot leave at all.
+     *
+     * Inlining copies a callee's error location as an ordinary one -- `inlinedCopy` clears the
+     * `error` flag -- and joins it to the caller's error location with a do-nothing edge; nested
+     * inlining chains several of those together, so only the last link carries the flag. Paths
+     * reaching such a sink may legitimately disagree about atomic nesting, because execution stops
+     * there either way, so the agreement check has to see through the whole chain rather than one
+     * link. (The joining edge carries `SequenceLabel(listOf(NopLabel))`, which `getFlatLabels`
+     * keeps rather than drops, so testing for an empty label does not recognise it either.)
+     */
+    private fun XcfaLocation.isTerminalSink(
+      seen: MutableSet<XcfaLocation> = mutableSetOf()
+    ): Boolean {
+      if (error) return true
+      // Execution stops here, so there is no later event for an atomic context to govern and the
+      // incoming paths need not agree on one. A thread's final location legitimately collects both
+      // ordinary completion and, once MemsafetyPass has redirected the error edges into it
+      // (breakUpErrors), paths that were inside a locked region -- which is where the overwhelming
+      // majority of the memsafety runs were failing.
+      if (final || outgoingEdges.isEmpty()) return true
+      if (!seen.add(this)) return false
+      val edge = outgoingEdges.singleOrNull() ?: return false
+      val doesNothing = { l: XcfaLabel -> l is NopLabel || (l is StmtLabel && l.stmt is SkipStmt) }
+      return edge.label.getFlatLabels().all(doesNothing) && edge.target.isTerminalSink(seen)
     }
 
     private fun AssignStmt<*>.process() {
       val consts = this.expr.toEvents()
+      if (varDecl.isLocal()) {
+        localWrite(varDecl, this.expr.with(consts))
+        return
+      }
       last = event(this.varDecl, WRITE)
       last.first().assignment = Eq(last.first().const.ref, this.expr.with(consts))
     }
@@ -334,27 +1197,44 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
     private fun AssumeStmt.process(
       assumeConsts: MutableMap<Any, MutableList<ConstDecl<*>>>,
       firstLabel: Boolean,
+      leadingAssume: Boolean,
     ) {
       val consts =
-        this.cond.vars.associateWith { it.threadVar(pid).getNewIndexed(false) } +
-          this.cond.dereferences.associateWith { memoryDecl.getNewIndexed(true) }
+        this.cond.vars.associateWith {
+          if (it.isLocal()) localRead(it) else it.threadVar(pid).getNewIndexed(false)
+        } + this.cond.dereferences.associateWith { it.memoryDecl.getNewIndexed(true) }
       val condWithConsts = this.cond.with(consts)
       val asAssign =
         consts.size == 1 &&
-          consts.keys.first().let { it is VarDecl<*> && it.threadVar(pid) !in lastWrites }
-      if (edge.source.outgoingEdges.size > 1 || !asAssign) {
+          consts.keys.first().let { c ->
+            c is VarDecl<*> &&
+              !c.isLocal() &&
+              c.threadVar(pid).let { v ->
+                v !in lastWrites ||
+                  lastWrites[v]?.let { it.size == 1 && it.first().assignment == True() } == true
+              }
+          }
+
+      val outgoingEdgesSize = edge.source.outgoingEdges.size
+      if (outgoingEdgesSize > 1 || !asAssign) {
         guard = guard + condWithConsts
-        if (firstLabel) {
+        // a branch condition can follow other assumes (e.g. a null check): it still reads the value
+        // the other branch reads, or both branches could be taken at once
+        if (leadingAssume) {
           consts.forEach { (v, c) -> assumeConsts.getOrPut(v) { mutableListOf() }.add(c) }
         }
       }
       this.cond.toEvents(consts, true)
-      if ((edge.source.outgoingEdges.size == 1 || !firstLabel) && asAssign) {
+      if ((outgoingEdgesSize == 1 || !firstLabel) && asAssign) {
         last.first().assignment = condWithConsts
       }
     }
 
     private fun HavocStmt<*>.process() {
+      if (varDecl.isLocal()) {
+        localWrite(varDecl, null)
+        return
+      }
       last = event(this.varDecl, WRITE)
       last.first().assignment = True()
     }
@@ -378,15 +1258,13 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
           ?: exit("unknown procedure name: ${this.name}")
       val newPid = Thread.uniqueId()
 
-      // assign parameter
-      val consts = this.params[1].toEvents()
-      procedure.params
-        .firstOrNull { it.second != ParamDirection.OUT }
-        ?.first
-        ?.let { arg ->
-          last = event(arg, WRITE, newPid)
-          last.first().assignment = Eq(last.first().const.ref, this.params[1].with(consts))
+      // assign parameters
+      procedure.params.forEachIndexed { index, param ->
+        if (param.second != ParamDirection.OUT) {
+          val consts = this.params[index].toEvents()
+          localWrite(param.first, this.params[index].with(consts), newPid)
         }
+      }
 
       last = event(this.pidVar, WRITE)
       val pidVar = this.pidVar.threadVar(pid)
@@ -394,10 +1272,25 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
         multipleUsePidVars.add(pidVar)
       }
       val newHistory = thread.startHistory + thread.procedure.name
-      val newThread = Thread(newPid, procedure, guard, pidVar, last.first(), newHistory, lastWrites)
-      last.first().assignment = Eq(last.first().const.ref, Int(newPid))
+      val newThread =
+        Thread.of(
+          procedure,
+          parseContext,
+          params,
+          newPid,
+          guard,
+          pidVar,
+          last.first(),
+          newHistory,
+          lastWrites,
+        )
+      // a literal of the handle's own type: Eq(bv, Int) would cast the handle to Int, which some
+      // solvers (e.g. Yices) do not support
+      val handle = last.first().const
+      last.first().assignment = Eq(handle.ref, handle.type.integerOf(newPid))
       threadLookup[pidVar] = setOf(Pair(guard, newThread))
-      ThreadProcessor(newThread).process()
+      // the parameters written above are locals of the new thread
+      ThreadProcessor(newThread, initialLocalValues = localValues.toMap()).process()
     }
 
     private fun JoinLabel.process(
@@ -413,7 +1306,13 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
       threadLookup[pidVar]?.forEach { (g, thread) ->
         guard = incomingGuard + g + thread.finalEvents.map { it.guard }.toOrInSet()
         val joinEvent = event(this.pidVar, READ).first()
-        thread.finalEvents.forEach { final -> po(final, joinEvent) }
+        doneVars[thread.pid]?.let { done ->
+          val incoming = last
+          last = listOf(joinEvent)
+          event(done, READ)
+          last = incoming
+        }
+        joins.add(PendingJoin(thread.finalEvents.toSet(), joinEvent))
         lastEvents.add(joinEvent)
         joinGuards.add(guard)
         thread.joinEvents.add(joinEvent)
@@ -426,44 +1325,71 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
       if (this !is AtomicFenceLabel) {
         exit("untransformed fence label: $this")
       }
-      if (this is AtomicBeginLabel) atomicBlock = E.uniqueClkId()
+      // a block begun mid-edge continues the edge's atomic unit
+      if (this is AtomicBeginLabel) {
+        atomicBlock = if (inEdge) last.first().clkId else E.uniqueClkId()
+      }
       if (this is AtomicEndLabel) atomicBlock = null
     }
 
+    /** The pthread functions' `int` result: 0, as they do not fail. */
+    private fun <T : Type> VarDecl<T>.assignZero() = Assign(this, type.integerOf(0)).process()
+
+    /** Processes [access] of the slot of [key] in thread [slotPid]. */
+    private fun threadSpecific(
+      key: Expr<*>,
+      slotPid: Int,
+      access: (Dereference<*, *, Type>) -> Unit,
+    ) {
+      val decl = threadSpecificDecls[slotPid] ?: exit("no thread-specific slot for thread $slotPid")
+      val slot = Dereference.of(cast(key, key.type), Int(0), decl.type)
+      threadSpecificSlot = slot to decl
+      try {
+        access(slot)
+      } finally {
+        threadSpecificSlot = null
+      }
+    }
+
     private fun InvokeLabel.process() {
+      inLibraryCall = true
+      try {
+        processLibraryCall()
+      } finally {
+        inLibraryCall = false
+      }
+    }
+
+    private fun InvokeLabel.processLibraryCall() {
       when (name) {
         "pthread_getspecific" -> {
           val ret = (params[0] as RefExpr<*>).decl as VarDecl<*>
-          val key = (params[1] as Dereference<*, *, *>).array
-          val deref = Dereference.of(key, Int(pid), Int())
-          val assign = Assign(cast(ret, Int()), deref)
-          assign.process()
+          threadSpecific(params[1], pid) { slot -> Assign(cast(ret, slot.type), slot).process() }
         }
 
         "pthread_setspecific" -> {
           val ret = (params[0] as RefExpr<*>).decl as VarDecl<*>
-          val key = (params[1] as Dereference<*, *, *>).array
-          val deref = Dereference.of(key, Int(pid), Int())
-          val memAssign = MemoryAssignStmt.of(deref, cast(params[2], Int()))
-          memAssign.process()
-          val assign = Assign(cast(ret, Int()), Int(0))
-          assign.process()
+          threadSpecific(params[1], pid) { slot ->
+            MemoryAssignStmt.of(slot, cast(params[2], slot.type)).process()
+          }
+          ret.assignZero()
         }
 
         "pthread_key_create" -> {
-          val isNull = Eq(params[2], Int(0))
+          val isNull = Eq(params[2], params[2].type.integerOf(0))
           if (ExprSimplifier.create().simplify(isNull, ImmutableValuation.empty()) != True()) {
             exit("pthread_key_create with non-null destructor")
           }
+          // the key is fresh per call site (CLibraryFunctionsPass): executing it twice would
+          // reuse it, and the two keys would share their slots
+          if (!createdKeys.add(params[1])) exit("pthread_key_create executed more than once")
           val ret = (params[0] as RefExpr<*>).decl as VarDecl<*>
-          val key = (params[1] as RefExpr<*>).decl as VarDecl<*>
-          repeat(maxPid) { i ->
-            val deref = Dereference.of(key.ref, Int(i), Int())
-            val default = MemoryAssignStmt.of(deref, Int(0))
-            default.process()
+          threadSpecificDecls.keys.forEach { i ->
+            threadSpecific(params[1], i) { slot ->
+              MemoryAssignStmt.of(slot, slot.type.integerOf(0)).process()
+            }
           }
-          val assign = Assign(cast(ret, Int()), Int(0))
-          assign.process()
+          ret.assignZero()
         }
 
         else -> {
@@ -512,7 +1438,11 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
   }
 
   private fun <T : Type> VarDecl<T>.threadVar(pid: Int): VarDecl<T> =
-    if (this !== memoryDecl && xcfa.globalVars.none { it.wrappedVar == this && !it.threadLocal }) {
+    if (
+      this !in memoryDeclSet &&
+        doneVars.values.none { it == this } &&
+        xcfa.globalVars.none { it.wrappedVar == this && !it.threadLocal }
+    ) {
       // if not global var
       cast(
         localVars
@@ -521,27 +1451,6 @@ internal class XcfaToEventGraph(private val xcfa: XCFA) {
         type,
       )
     } else this
-
-  private val maxPid by lazy {
-    var counter = 1
-    fun explore(proc: XcfaProcedure, startHistory: Set<String>) {
-      proc.edges.forEach { e ->
-        e.getFlatLabels().filterIsInstance<StartLabel>().forEach { s ->
-          if (s.name in startHistory) {
-            exit("recursive thread start")
-          }
-          counter++
-          val procedure =
-            xcfa.procedures.find { it.name == s.name } ?: exit("unknown procedure name: ${s.name}")
-          explore(procedure, startHistory + proc.name)
-        }
-      }
-    }
-
-    val initProc = xcfa.initProcedures.first().first
-    explore(initProc, setOf(initProc.name))
-    counter
-  }
 
   private fun exit(msg: String): Nothing {
     error("Feature not supported by OC checker: $msg.")

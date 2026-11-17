@@ -23,7 +23,8 @@ import hu.bme.mit.theta.analysis.algorithm.bounded.pipeline.passes.L2SMEPass
 import hu.bme.mit.theta.analysis.algorithm.bounded.pipeline.passes.PredicateAbstractionMEPass
 import hu.bme.mit.theta.analysis.algorithm.bounded.pipeline.passes.ReverseMEPass
 import hu.bme.mit.theta.analysis.algorithm.mdd.MddChecker
-import hu.bme.mit.theta.analysis.algorithm.mdd.MddProof
+import hu.bme.mit.theta.analysis.algorithm.mdd.node.expression.MddApproximation
+import hu.bme.mit.theta.analysis.algorithm.mdd.result.MddProof
 import hu.bme.mit.theta.analysis.expl.ExplState
 import hu.bme.mit.theta.analysis.expr.refinement.createFwBinItpCheckerFactory
 import hu.bme.mit.theta.analysis.ptr.PtrState
@@ -64,6 +65,10 @@ fun getMddChecker(
       proofStrategy = mddConfig.proofStrategy,
       traceTimeout = mddConfig.traceTimeout,
       solverMeasurements = mddConfig.solverMeasurements,
+      traceSearch = mddConfig.traceSearch,
+      approximation = MddApproximation.of(mddConfig.edgeCapStrategy, mddConfig.edgeLimit),
+      symbolicValues = mddConfig.symbolicValues,
+      qeSolverPool = SolverPool(getSolver(mddConfig.qeSolver, false)),
     )
   }
   val passes = mutableListOf<MonolithicExprPass<MddProof>>()
@@ -86,6 +91,6 @@ fun getMddChecker(
     passes,
     logger,
     config.outputConfig.acceptUnreliableSafe,
-    true,
+    !mddConfig.symbolicValues,
   )
 }

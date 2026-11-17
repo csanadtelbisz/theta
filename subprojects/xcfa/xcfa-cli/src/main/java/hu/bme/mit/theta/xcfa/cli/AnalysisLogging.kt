@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -15,16 +15,14 @@
  */
 package hu.bme.mit.theta.xcfa.cli
 
-import com.google.gson.GsonBuilder
-import com.google.gson.JsonParser
+import hu.bme.mit.theta.analysis.utils.PrecCache
 import hu.bme.mit.theta.common.logging.Logger
 import hu.bme.mit.theta.frontend.ParseContext
 import hu.bme.mit.theta.graphsolver.patterns.constraints.MCM
 import hu.bme.mit.theta.xcfa.ErrorDetection
-import hu.bme.mit.theta.xcfa.cli.params.HornConfig
-import hu.bme.mit.theta.xcfa.cli.params.OutputLevel
-import hu.bme.mit.theta.xcfa.cli.params.XcfaConfig
-import hu.bme.mit.theta.xcfa.cli.utils.getGson
+import hu.bme.mit.theta.xcfa.cli.params.*
+import hu.bme.mit.theta.xcfa.cli.utils.PrecReuse
+import hu.bme.mit.theta.xcfa.cli.utils.PrecSerializationMode
 import hu.bme.mit.theta.xcfa.model.XCFA
 import hu.bme.mit.theta.xcfa.model.toDot
 import hu.bme.mit.theta.xcfa.toC
@@ -50,14 +48,18 @@ internal fun preAnalysisLogging(
         "Writing pre-verification artifacts to directory ${resultFolder.absolutePath} with config ${config.outputConfig}"
       )
 
+      if (
+        config.outputConfig.precOutputConfig.serializationMode == PrecSerializationMode.CONTINUOUS
+      ) {
+        PrecCache.register { PrecReuse.write(resultFolder, config, parseContext, logger) }
+      }
+
       if (enabled || config.outputConfig.chcOutputConfig.enabled) {
         writeChc(xcfa, resultFolder, config, logger)
       }
 
       if (enabled || config.outputConfig.xcfaOutputConfig.enabled) {
         writeXcfaAsDot(resultFolder, xcfa, logger)
-
-        writeXcfaAsJson(resultFolder, xcfa, logger)
       }
 
       if (enabled || config.outputConfig.cOutputConfig.enabled) {
@@ -88,17 +90,6 @@ private fun writeXcfaAsC(
     )
   } catch (e: Throwable) {
     logger.info("Could not emit XCFA as C file: ${e.stackTraceToString()}")
-  }
-}
-
-private fun writeXcfaAsJson(resultFolder: File, xcfa: XCFA, logger: Logger) {
-  try {
-    val xcfaJsonFile = File(resultFolder, "xcfa.json")
-    val uglyJson = getGson(xcfa).toJson(xcfa)
-    val create = GsonBuilder().setPrettyPrinting().create()
-    xcfaJsonFile.writeText(create.toJson(JsonParser.parseString(uglyJson)))
-  } catch (e: Exception) {
-    logger.info("Could not emit XCFA as JSON file: ${e.stackTraceToString()}")
   }
 }
 

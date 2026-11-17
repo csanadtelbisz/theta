@@ -21,8 +21,6 @@ import hu.bme.mit.theta.analysis.algorithm.mdd.fixedpoint.IterationStrategy
 import hu.bme.mit.theta.analysis.expr.refinement.PruneStrategy.FULL
 import hu.bme.mit.theta.analysis.expr.refinement.PruneStrategy.LAZY
 import hu.bme.mit.theta.frontend.ParseContext
-import hu.bme.mit.theta.frontend.transformation.ArchitectureConfig.ArithmeticType.efficient
-import hu.bme.mit.theta.graphsolver.patterns.constraints.MCM
 import hu.bme.mit.theta.xcfa.ErrorDetection.ERROR_LOCATION
 import hu.bme.mit.theta.xcfa.analysis.isInlined
 import hu.bme.mit.theta.xcfa.cli.params.*
@@ -33,6 +31,7 @@ import hu.bme.mit.theta.xcfa.cli.params.ConeOfInfluenceMode.NO_COI
 import hu.bme.mit.theta.xcfa.cli.params.Domain.EXPL
 import hu.bme.mit.theta.xcfa.cli.params.ExitCodes.SERVER_ERROR
 import hu.bme.mit.theta.xcfa.cli.params.ExitCodes.SOLVER_ERROR
+import hu.bme.mit.theta.xcfa.cli.params.ExitCodes.VERIFICATION_STUCK
 import hu.bme.mit.theta.xcfa.cli.params.ExprSplitterOptions.WHOLE
 import hu.bme.mit.theta.xcfa.cli.params.InitPrec.EMPTY
 import hu.bme.mit.theta.xcfa.cli.params.POR.AASPOR
@@ -43,48 +42,27 @@ import hu.bme.mit.theta.xcfa.cli.params.Search.BFS
 import hu.bme.mit.theta.xcfa.cli.params.Search.DFS
 import hu.bme.mit.theta.xcfa.cli.params.Search.ERR
 import hu.bme.mit.theta.xcfa.model.XCFA
-import hu.bme.mit.theta.xcfa.passes.LbePass
-import hu.bme.mit.theta.xcfa.passes.LoopUnrollPass
+import java.nio.file.Files
+import java.nio.file.Path
 
 fun baseCegarConfig(
   xcfa: XCFA,
-  mcm: MCM,
   parseContext: ParseContext,
   portfolioConfig: XcfaConfig<*, *>,
-  serialize: Boolean,
 ): XcfaConfig<*, CegarConfig> {
   var baseConfig =
     XcfaConfig(
-      inputConfig =
-        if (serialize)
-          portfolioConfig.inputConfig.copy(
-            xcfaWCtx =
-              if (portfolioConfig.backendConfig.parseInProcess) null
-              else Triple(xcfa, mcm, parseContext),
-            propertyFile = null,
-            property = portfolioConfig.inputConfig.property,
-          )
-        else portfolioConfig.inputConfig,
-      frontendConfig =
-        if (serialize)
-          FrontendConfig(
-            lbeLevel = LbePass.defaultLevel,
-            loopUnroll = LoopUnrollPass.UNROLL_LIMIT,
-            inputType = InputType.C,
-            specConfig = CFrontendConfig(arithmetic = efficient),
-          )
-        else (portfolioConfig.frontendConfig as FrontendConfig<SpecFrontendConfig>),
+      inputConfig = portfolioConfig.inputConfig,
+      frontendConfig = portfolioConfig.frontendConfig as FrontendConfig<SpecFrontendConfig>,
       backendConfig =
         BackendConfig(
           backend = CEGAR,
           solverHome = portfolioConfig.backendConfig.solverHome,
           timeoutMs = 0,
-          parseInProcess = !serialize,
           specConfig =
             CegarConfig(
               initPrec = EMPTY,
               por = NOPOR,
-              porSeed = -1,
               coi = NO_COI,
               cexMonitor = CHECK,
               abstractorConfig =
@@ -150,7 +128,51 @@ val anythingButServerError =
 
 val solverError = ExceptionTrigger(ErrorCodeException(SOLVER_ERROR.code), label = "SolverError")
 
+val verificationStuck =
+  ExceptionTrigger(ErrorCodeException(VERIFICATION_STUCK.code), label = "VerificationStuck")
+
 val anyError = ExceptionTrigger(label = "Anything")
+
+/**
+ * One step of a portfolio chain: the configuration built by [make] on [solver], paired with the
+ * same configuration on [alt], its twin that takes over when the solver fails. When [alt] is
+ * [solver] there is nothing to retry on, and the step is paired with itself.
+ */
+fun <N : Node> step(make: (Long, String) -> N, timeoutMs: Long, solver: String, alt: String) =
+  make(timeoutMs, solver).let { it to if (alt == solver) it else make(timeoutMs, alt) }
+
+/**
+ * The edges that chain [steps] one after the other and end in [last]. A solver error moves a step
+ * to its twin, and any failure of the twin moves on, so a solver failure costs no other step its
+ * slice. Other failures move on to the next step; when [inProcess], only timeouts and unsolvable
+ * tasks do.
+ */
+fun chainEdges(steps: List<Pair<Node, Node>>, last: Node, inProcess: Boolean): Set<Edge> {
+  val next = if (inProcess) timeoutOrNotSolvableError else anyError
+  val nextOrSolverError = if (inProcess) anythingButServerError else anyError
+  val targets = steps.drop(1).map { it.first } + last
+  return buildSet {
+    steps.zip(targets).forEach { (step, target) ->
+      val (primary, twin) = step
+      if (twin === primary) {
+        add(Edge(primary, target, nextOrSolverError))
+      } else {
+        add(Edge(primary, twin, solverError))
+        add(Edge(primary, target, next))
+        add(Edge(twin, target, nextOrSolverError))
+      }
+    }
+  }
+}
+
+/**
+ * [solver] at [version] if that version is installed in the solver home, otherwise its latest
+ * installed version. Lets a portfolio keep the versions it was tuned with without failing on a
+ * distribution that only ships newer ones.
+ */
+fun XcfaConfig<*, *>.solverVersionOrLatestFallback(solver: String, version: String): String =
+  if (Files.isDirectory(Path.of(backendConfig.solverHome, solver, version))) "$solver:$version"
+  else "$solver:latest"
 
 fun XcfaConfig<*, CegarConfig>.adaptConfig(
   initPrec: InitPrec = this.backendConfig.specConfig!!.initPrec,
@@ -173,7 +195,6 @@ fun XcfaConfig<*, CegarConfig>.adaptConfig(
       backendConfig.copy(
         timeoutMs = timeoutMs,
         inProcess = inProcess,
-        parseInProcess = inProcess && this.backendConfig.parseInProcess,
         specConfig =
           backendConfig.specConfig!!.copy(
             initPrec = initPrec,
@@ -202,36 +223,16 @@ fun XcfaConfig<*, CegarConfig>.adaptConfig(
 }
 
 fun baseAsgCegarConfig(
-  xcfa: XCFA,
-  mcm: MCM,
-  parseContext: ParseContext,
-  portfolioConfig: XcfaConfig<*, *>,
-  serialize: Boolean,
+  portfolioConfig: XcfaConfig<*, *>
 ): XcfaConfig<SpecFrontendConfig, AsgCegarConfig> =
   XcfaConfig(
-    inputConfig =
-      if (serialize)
-        portfolioConfig.inputConfig.copy(
-          xcfaWCtx = Triple(xcfa, mcm, parseContext),
-          propertyFile = null,
-          property = portfolioConfig.inputConfig.property,
-        )
-      else portfolioConfig.inputConfig,
-    frontendConfig =
-      if (serialize)
-        FrontendConfig(
-          lbeLevel = LbePass.defaultLevel,
-          loopUnroll = LoopUnrollPass.UNROLL_LIMIT,
-          inputType = InputType.C,
-          specConfig = CFrontendConfig(arithmetic = efficient),
-        )
-      else (portfolioConfig.frontendConfig as FrontendConfig<SpecFrontendConfig>),
+    inputConfig = portfolioConfig.inputConfig,
+    frontendConfig = portfolioConfig.frontendConfig as FrontendConfig<SpecFrontendConfig>,
     backendConfig =
       BackendConfig(
         backend = Backend.LIVENESS_CEGAR,
         solverHome = portfolioConfig.backendConfig.solverHome,
         timeoutMs = 0,
-        parseInProcess = !serialize,
         specConfig =
           AsgCegarConfig(
             initPrec = EMPTY,
@@ -276,7 +277,6 @@ fun XcfaConfig<*, AsgCegarConfig>.adaptConfig(
       backendConfig.copy(
         timeoutMs = timeoutMs,
         inProcess = inProcess,
-        parseInProcess = inProcess && backendConfig.parseInProcess,
         specConfig =
           backendConfig.specConfig!!.copy(
             initPrec = initPrec,
@@ -302,38 +302,16 @@ fun XcfaConfig<*, AsgCegarConfig>.adaptConfig(
   )
 }
 
-fun baseBoundedConfig(
-  xcfa: XCFA,
-  mcm: MCM,
-  parseContext: ParseContext,
-  portfolioConfig: XcfaConfig<*, *>,
-  serialize: Boolean,
-): XcfaConfig<*, BoundedConfig> =
+fun baseBoundedConfig(portfolioConfig: XcfaConfig<*, *>): XcfaConfig<*, BoundedConfig> =
   XcfaConfig(
-    inputConfig =
-      if (serialize)
-        portfolioConfig.inputConfig.copy(
-          xcfaWCtx = Triple(xcfa, mcm, parseContext),
-          propertyFile = null,
-          property = portfolioConfig.inputConfig.property,
-        )
-      else portfolioConfig.inputConfig,
-    frontendConfig =
-      if (serialize)
-        FrontendConfig(
-          lbeLevel = LbePass.defaultLevel,
-          loopUnroll = LoopUnrollPass.UNROLL_LIMIT,
-          inputType = InputType.C,
-          specConfig = CFrontendConfig(arithmetic = efficient),
-        )
-      else (portfolioConfig.frontendConfig as FrontendConfig<SpecFrontendConfig>),
+    inputConfig = portfolioConfig.inputConfig,
+    frontendConfig = portfolioConfig.frontendConfig as FrontendConfig<SpecFrontendConfig>,
     backendConfig =
       BackendConfig(
         backend = Backend.BOUNDED,
         memlimit = portfolioConfig.backendConfig.memlimit,
         solverHome = portfolioConfig.backendConfig.solverHome,
         timeoutMs = 0,
-        parseInProcess = !serialize,
         specConfig =
           BoundedConfig(
             bmcConfig = BMCConfig(true),
@@ -346,38 +324,16 @@ fun baseBoundedConfig(
     debugConfig = portfolioConfig.debugConfig,
   )
 
-fun baseMddConfig(
-  xcfa: XCFA,
-  mcm: MCM,
-  parseContext: ParseContext,
-  portfolioConfig: XcfaConfig<*, *>,
-  serialize: Boolean,
-): XcfaConfig<*, MddConfig> =
+fun baseMddConfig(portfolioConfig: XcfaConfig<*, *>): XcfaConfig<*, MddConfig> =
   XcfaConfig(
-    inputConfig =
-      if (serialize)
-        portfolioConfig.inputConfig.copy(
-          xcfaWCtx = Triple(xcfa, mcm, parseContext),
-          propertyFile = null,
-          property = portfolioConfig.inputConfig.property,
-        )
-      else portfolioConfig.inputConfig,
-    frontendConfig =
-      if (serialize)
-        FrontendConfig(
-          lbeLevel = LbePass.defaultLevel,
-          loopUnroll = LoopUnrollPass.UNROLL_LIMIT,
-          inputType = InputType.C,
-          specConfig = CFrontendConfig(arithmetic = efficient),
-        )
-      else (portfolioConfig.frontendConfig as FrontendConfig<SpecFrontendConfig>),
+    inputConfig = portfolioConfig.inputConfig,
+    frontendConfig = portfolioConfig.frontendConfig as FrontendConfig<SpecFrontendConfig>,
     backendConfig =
       BackendConfig(
         backend = Backend.MDD,
         memlimit = portfolioConfig.backendConfig.memlimit / 5 * 4,
         solverHome = portfolioConfig.backendConfig.solverHome,
         timeoutMs = 0,
-        parseInProcess = !serialize,
         specConfig =
           MddConfig(
             solver = "Z3",
@@ -398,12 +354,13 @@ fun XcfaConfig<*, BoundedConfig>.adaptConfig(
   itpEnabled: Boolean = false,
   bmcSolver: String = "Z3",
   indSolver: String = "Z3",
-  itpSolver: String = "cvc5:1.0.8",
+  itpSolver: String = solverVersionOrLatestFallback("cvc5", "1.0.8"),
   timeoutMs: Long = 0,
   inProcess: Boolean = this.backendConfig.inProcess,
   reversed: Boolean = false,
   cegar: Boolean = false,
   initprec: InitPrec = EMPTY,
+  blockEncoding: Boolean = this.backendConfig.specConfig!!.blockEncoding,
 ): XcfaConfig<*, BoundedConfig> =
   copy(
     backendConfig =
@@ -415,6 +372,7 @@ fun XcfaConfig<*, BoundedConfig>.adaptConfig(
             reversed = reversed,
             cegar = cegar,
             initPrec = initprec,
+            blockEncoding = blockEncoding,
             bmcConfig =
               backendConfig.specConfig!!
                 .bmcConfig
@@ -428,44 +386,37 @@ fun XcfaConfig<*, BoundedConfig>.adaptConfig(
                 .itpConfig
                 .copy(disable = !itpEnabled, itpSolver = itpSolver),
           ),
-        parseInProcess = inProcess && backendConfig.parseInProcess,
       )
   )
 
-fun baseIc3Config(
-  xcfa: XCFA,
-  mcm: MCM,
-  parseContext: ParseContext,
-  portfolioConfig: XcfaConfig<*, *>,
-  serialize: Boolean,
-): XcfaConfig<*, Ic3Config> =
+fun baseIc3Config(portfolioConfig: XcfaConfig<*, *>): XcfaConfig<*, Ic3Config> =
   XcfaConfig(
-    inputConfig =
-      if (serialize)
-        portfolioConfig.inputConfig.copy(
-          xcfaWCtx = Triple(xcfa, mcm, parseContext),
-          propertyFile = null,
-          property = portfolioConfig.inputConfig.property,
-        )
-      else portfolioConfig.inputConfig,
-    frontendConfig =
-      if (serialize)
-        FrontendConfig(
-          lbeLevel = LbePass.defaultLevel,
-          loopUnroll = LoopUnrollPass.UNROLL_LIMIT,
-          inputType = InputType.C,
-          specConfig = CFrontendConfig(arithmetic = efficient),
-        )
-      else (portfolioConfig.frontendConfig as FrontendConfig<SpecFrontendConfig>),
+    inputConfig = portfolioConfig.inputConfig,
+    frontendConfig = portfolioConfig.frontendConfig as FrontendConfig<SpecFrontendConfig>,
     backendConfig =
       BackendConfig(
         backend = Backend.IC3,
         memlimit = portfolioConfig.backendConfig.memlimit,
         solverHome = portfolioConfig.backendConfig.solverHome,
         timeoutMs = 0,
-        parseInProcess = !serialize,
         specConfig =
           Ic3Config(solver = "Z3", validateSolver = false, reversed = false, cegar = true),
+      ),
+    outputConfig = getDefaultOutputConfig(portfolioConfig),
+    debugConfig = portfolioConfig.debugConfig,
+  )
+
+fun baseDssConfig(portfolioConfig: XcfaConfig<*, *>): XcfaConfig<*, DssConfig> =
+  XcfaConfig(
+    inputConfig = portfolioConfig.inputConfig,
+    frontendConfig = portfolioConfig.frontendConfig as FrontendConfig<SpecFrontendConfig>,
+    backendConfig =
+      BackendConfig(
+        backend = Backend.DSS,
+        memlimit = portfolioConfig.backendConfig.memlimit,
+        solverHome = portfolioConfig.backendConfig.solverHome,
+        timeoutMs = 0,
+        specConfig = DssConfig(),
       ),
     outputConfig = getDefaultOutputConfig(portfolioConfig),
     debugConfig = portfolioConfig.debugConfig,
@@ -481,9 +432,10 @@ fun getDefaultOutputConfig(portfolioConfig: XcfaConfig<*, *>) =
     chcOutputConfig = portfolioConfig.outputConfig.chcOutputConfig,
     witnessConfig =
       WitnessConfig(
-        enabled = WitnessLevel.SVCOMP,
-        concretizerSolver = "Z3",
-        validateConcretizerSolver = false,
+        enabled = portfolioConfig.outputConfig.witnessConfig.enabled,
+        concretizerSolver = portfolioConfig.outputConfig.witnessConfig.concretizerSolver,
+        validateConcretizerSolver =
+          portfolioConfig.outputConfig.witnessConfig.validateConcretizerSolver,
         inputFileForWitness =
           portfolioConfig.outputConfig.witnessConfig.inputFileForWitness
             ?: portfolioConfig.inputConfig.input,

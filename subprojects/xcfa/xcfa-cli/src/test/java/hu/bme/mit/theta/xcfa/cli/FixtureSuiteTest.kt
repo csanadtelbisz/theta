@@ -1,0 +1,212 @@
+/*
+ *  Copyright 2026 Budapest University of Technology and Economics
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ */
+package hu.bme.mit.theta.xcfa.cli
+
+import java.io.File
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import org.junit.jupiter.api.DynamicTest
+import org.junit.jupiter.api.TestFactory
+import org.junit.jupiter.api.fail
+
+/**
+ * The feature-guard fixtures, as ordinary JUnit tests.
+ *
+ * Each fixture under `canaries/fixtures` is a minimal program isolating one frontend or
+ * instrumentation change, and `fixtures/fixtures.tsv` says how to run it and what must happen:
+ * - `PARSE-OK` / `FRONTEND-FAIL` -- run the frontend only (`--backend NONE`) and check whether it
+ *   built the XCFA. A fixture builds only if its change is present, so reverting the change flips
+ *   the outcome.
+ * - `SAFE` / `UNSAFE` / `UNKNOWN`, optionally `:<property>` -- run the real verifier and check the
+ *   verdict. Use these for changes that alter values rather than what parses: a miswritten memory
+ *   cell parses perfectly and only shows up as a wrong answer. `UNKNOWN` is for a verdict that the
+ *   tool must withhold.
+ *
+ * An optional sixth column pins `--memory-model`; left empty, the tool's default applies.
+ *
+ * Unlike [CanarySuiteTest] this **fails** rather than skips when its prerequisites are missing: the
+ * fixtures are the part of the gate that must run everywhere, and a silent skip would let a change
+ * through unguarded. It never fetches sv-benchmarks; it only says where it looked.
+ */
+class FixtureSuiteTest {
+
+  private companion object {
+    /** Frontend-only fixtures are parsing, not verification. */
+    val PARSE_TIMEOUT_SECONDS = seconds("theta.fixture.parseTimeout", 60L)
+
+    /** Verdict fixtures run the portfolio; a fixture that needs longer is too large to keep. */
+    val VERDICT_TIMEOUT_SECONDS = seconds("theta.fixture.verdictTimeout", 60L)
+
+    /** Each row is a separate Theta process; the fixtures are small enough to run a few at once. */
+    val PARALLELISM = System.getProperty("theta.fixture.jobs")?.toIntOrNull() ?: 4
+
+    private fun seconds(property: String, fallback: Long) =
+      System.getProperty(property)?.toLongOrNull() ?: fallback
+  }
+
+  @TestFactory
+  fun fixtures(): List<DynamicTest> {
+    val repoRoot = File(System.getProperty("theta.canary.repoRoot") ?: ".").absoluteFile
+    val home =
+      System.getProperty("theta.canary.home")?.let(::File)
+        ?: File(repoRoot, "subprojects/xcfa/xcfa-cli/canaries")
+    val tsv = File(home, "fixtures/fixtures.tsv")
+    val svBenchmarks =
+      File(
+        System.getProperty("theta.canary.svBenchmarks")
+          ?: repoRoot.resolveSibling("sv-benchmarks").path
+      )
+    val properties = File(svBenchmarks, "c/properties")
+    val distDir =
+      System.getProperty("theta.canary.dist")?.let(::File)
+        ?: File(repoRoot, "subprojects/xcfa/xcfa-cli/build/distributions/Theta-svcomp")
+
+    // Prerequisites are failures, not assumptions. Say exactly what is missing and how to get it;
+    // never fetch anything.
+    val missing =
+      when {
+        !tsv.isFile -> "no fixture registry at $tsv"
+        !properties.isDirectory ->
+          "sv-benchmarks checkout not found: expected the property files at $properties.\n" +
+            "Check out https://gitlab.com/sosy-lab/benchmarking/sv-benchmarks next to this " +
+            "repository, or point -Ptheta.canary.svBenchmarks at an existing checkout. This task " +
+            "never downloads it."
+        else -> null
+      }
+    if (missing != null) return listOf(DynamicTest.dynamicTest("fixtures") { fail(missing) })
+
+    val theta = SuiteSupport.ensureDistribution(distDir)
+    if (theta == null) {
+      return listOf(
+        DynamicTest.dynamicTest("fixtures") {
+          fail(
+            "no built distribution at $distDir -- run `gradle :theta-xcfa-cli:buildArchiveTheta-svcomp` first"
+          )
+        }
+      )
+    }
+
+    val rows =
+      tsv
+        .readLines()
+        .drop(1)
+        .filter { it.isNotBlank() }
+        .map { it.split('\t') }
+        .filter { it.size >= 4 }
+
+    if (rows.isEmpty())
+      return listOf(DynamicTest.dynamicTest("fixtures") { fail("no fixture rows in $tsv") })
+
+    // All rows start now; each test waits for its own row, so the report stays one test per row.
+    val pool = Executors.newFixedThreadPool(PARALLELISM)
+    val tests =
+      rows.map { row ->
+        val (fixture, arithmetic, architecture, expect) = row
+        val feature = row.getOrElse(4) { "" }
+        val memoryModel = row.getOrElse(5) { "" }
+        val name = if (memoryModel.isEmpty()) fixture else "$fixture ($memoryModel)"
+        val outcome =
+          pool.submit<Pair<String, String>> {
+            val input = File(home, "fixtures/$fixture")
+            check(input.isFile) { "fixture file not found: $input" }
+            run(theta, input, arithmetic, architecture, memoryModel, expect, properties)
+          }
+        DynamicTest.dynamicTest("fixture $name") {
+          val (actual, diagnosis) =
+            try {
+              outcome.get()
+            } catch (e: ExecutionException) {
+              throw e.cause ?: e
+            }
+          if (actual != expect) fail("expected=$expect actual=$actual -- $feature\n$diagnosis")
+        }
+      }
+    pool.shutdown()
+    return tests
+  }
+
+  /**
+   * The outcome of one fixture, in the vocabulary [fixtures.tsv] uses, and why the run ended the
+   * way it did (see [SuiteSupport.diagnose]).
+   */
+  private fun run(
+    theta: File,
+    input: File,
+    arithmetic: String,
+    architecture: String,
+    memoryModel: String,
+    expect: String,
+    properties: File,
+  ): Pair<String, String> {
+    val verdict = expect.substringBefore(':')
+    val isVerdictFixture = verdict == "SAFE" || verdict == "UNSAFE" || verdict == "UNKNOWN"
+    val property =
+      File(
+        properties,
+        if (expect.contains(':')) "${expect.substringAfter(':')}.prp" else "unreach-call.prp",
+      )
+    check(property.isFile) { "property file not found: $property" }
+
+    val options = buildList {
+      add("--svcomp")
+      addAll(if (isVerdictFixture) listOf("--portfolio", "STABLE") else listOf("--backend", "NONE"))
+      addAll(listOf("--loglevel", "RESULT"))
+      addAll(listOf("--property", property.absolutePath))
+      addAll(listOf("--architecture", architecture))
+      addAll(listOf("--arithmetic", arithmetic))
+      if (memoryModel.isNotEmpty()) addAll(listOf("--memory-model", memoryModel))
+    }
+    val command = SuiteSupport.thetaCommand(theta, input, options)
+    val timeout = if (isVerdictFixture) VERDICT_TIMEOUT_SECONDS else PARSE_TIMEOUT_SECONDS
+    val result = SuiteSupport.execute(command, theta, timeout)
+    val output = result.output
+    val diagnosis = SuiteSupport.diagnose(result, timeout)
+
+    if (!isVerdictFixture) {
+      // Procedure passes run after the parser has reported success, and may still refuse.
+      val actual =
+        when {
+          output.contains("Frontend failed!") -> "FRONTEND-FAIL"
+          output.contains("ParsingResult Success") -> "PARSE-OK"
+          else -> "OTHER"
+        }
+      return (if (actual == verdict) expect else actual) to diagnosis
+    }
+    val actual =
+      when {
+        output.contains("(SafetyResult Safe)") -> "SAFE"
+        output.contains("(SafetyResult Unsafe") -> "UNSAFE"
+        output.contains("(SafetyResult Unknown") -> "UNKNOWN"
+        else -> "OTHER"
+      }
+    // The expectation may name a property after the verdict; echo it back on a match so the
+    // comparison is against the registry's own spelling.
+    return (if (actual == verdict) expect else actual) to diagnosis
+  }
+
+  /**
+   * Runs [command] and returns everything it printed.
+   *
+   * `theta-start.sh` launches a child JVM rather than exec'ing one, so killing the script on
+   * timeout leaves that JVM running and holding the pipe -- the read would then block forever, long
+   * after the timeout. Destroying the whole process tree is what actually releases it.
+   */
+
+  /**
+   * The extracted distribution, extracting the archive next to it when only that is present, or
+   * null when neither exists. Also restores the exec bit, which a plain unzip drops.
+   */
+}

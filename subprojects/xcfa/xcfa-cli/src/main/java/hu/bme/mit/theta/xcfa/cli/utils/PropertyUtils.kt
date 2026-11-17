@@ -27,6 +27,8 @@ import hu.bme.mit.theta.xcfa.cli.params.ExitCodes
 import hu.bme.mit.theta.xcfa.cli.params.XcfaConfig
 import hu.bme.mit.theta.xcfa.cli.params.exitProcess
 import hu.bme.mit.theta.xcfa.cli.witnesstransformation.ApplyWitnessPass
+import hu.bme.mit.theta.xcfa.cli.witnesstransformation.TerminationWitnessPass
+import hu.bme.mit.theta.xcfa.witnesses.EntryType
 import hu.bme.mit.theta.xcfa.witnesses.WitnessYamlConfig
 import hu.bme.mit.theta.xcfa.witnesses.YamlWitness
 import java.io.FileNotFoundException
@@ -38,12 +40,14 @@ fun determineProperty(config: XcfaConfig<*, *>, logger: Logger): XcfaProperty =
         val propertyFile = config.inputConfig.propertyFile!!
         when {
           propertyFile.name.endsWith("unreach-call.prp") -> ERROR_LOCATION
+          propertyFile.name.endsWith("correct-annotations.prp") -> ERROR_LOCATION
           propertyFile.name.endsWith("no-data-race.prp") -> DATA_RACE
           propertyFile.name.endsWith("no-overflow.prp") -> OVERFLOW
           propertyFile.name.endsWith("valid-memsafety.prp") -> MEMSAFETY
           propertyFile.name.endsWith("valid-memcleanup.prp") -> MEMCLEANUP
           propertyFile.name.endsWith("termination.prp") -> TERMINATION
           propertyFile.name.endsWith("no-assertion-violation.prp") -> NO_ASSERTION_VIOLATION
+          propertyFile.name.endsWith("check-sat.prp") -> ERROR_LOCATION
 
           else -> {
             logger.write(
@@ -75,7 +79,9 @@ fun determineProperty(config: XcfaConfig<*, *>, logger: Logger): XcfaProperty =
         )
         XcfaProperty(
           iP.inputProperty,
-          WitnessInfo(witness, { p: ParseContext -> ApplyWitnessPass(p, witness) }),
+          if (iP.inputProperty == TERMINATION && witness.entryType == EntryType.INVARIANTS)
+            WitnessInfo(witness) { p: ParseContext -> TerminationWitnessPass(p, witness) }
+          else WitnessInfo(witness) { p: ParseContext -> ApplyWitnessPass(p, witness) },
         )
       } ?: iP
     }

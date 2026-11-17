@@ -74,6 +74,7 @@ fun getPathEnumerationChecker(
       pathEnumerationConfig.validateAbstractionSolver,
     )
 
+  val random = explorationRandom()
   val ignoredVarRegistry = mutableMapOf<VarDecl<*>, MutableSet<ExprState>>()
   val lts =
     pathEnumerationConfig.coi.getLts(
@@ -81,6 +82,7 @@ fun getPathEnumerationChecker(
       parseContext,
       pathEnumerationConfig.porLevel,
       ignoredVarRegistry,
+      random,
     )
 
   val abstractionSolverInstance = abstractionSolverFactory.createSolver()
@@ -99,7 +101,7 @@ fun getPathEnumerationChecker(
       StopCriterions.fullExploration(),
       logger,
       lts.second,
-      getXcfaErrorDetector(config.inputConfig.property.verifiedProperty),
+      getXcfaErrorDetector(config.inputConfig.property.verifiedProperty, parseContext),
       corePartialOrd,
       pathEnumerationConfig.havocMemory,
       lts.first,

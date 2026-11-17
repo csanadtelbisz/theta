@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package hu.bme.mit.theta.core.utils;
 import static hu.bme.mit.theta.core.decl.Decls.Const;
 import static hu.bme.mit.theta.core.decl.Decls.Var;
 import static hu.bme.mit.theta.core.type.anytype.Exprs.Ite;
+import static hu.bme.mit.theta.core.type.anytype.Exprs.Prime;
 import static hu.bme.mit.theta.core.type.arraytype.ArrayExprs.Array;
 import static hu.bme.mit.theta.core.type.arraytype.ArrayExprs.ArrayInit;
 import static hu.bme.mit.theta.core.type.arraytype.ArrayExprs.Read;
@@ -75,6 +76,7 @@ import hu.bme.mit.theta.core.type.arraytype.ArrayLitExpr;
 import hu.bme.mit.theta.core.type.arraytype.ArrayReadExpr;
 import hu.bme.mit.theta.core.type.booltype.BoolType;
 import hu.bme.mit.theta.core.type.bvtype.BvExprs;
+import hu.bme.mit.theta.core.type.bvtype.BvLitExpr;
 import hu.bme.mit.theta.core.type.bvtype.BvType;
 import hu.bme.mit.theta.core.type.inttype.IntType;
 import hu.bme.mit.theta.core.type.rattype.RatType;
@@ -159,6 +161,15 @@ public class ExprSimplifierTest {
         assertEquals(x, simplify(Or(x, Or(x, x))));
         assertEquals(True(), simplify(Or(x, Or(True(), z))));
         assertEquals(x, simplify(Or(x, Or(False(), x))));
+    }
+
+    @Test
+    public void testEmptyOr() {
+        final var empty = Or(List.of());
+        assertEquals(False(), empty.eval(ImmutableValuation.empty()));
+        assertEquals(False(), simplify(empty));
+        assertEquals(x, simplify(Or(empty, x)));
+        assertEquals(True(), simplify(Not(empty)));
     }
 
     // Rational
@@ -309,6 +320,13 @@ public class ExprSimplifierTest {
         assertEquals(Int(0), simplify(Mod(Int(-3), Int(-3))));
         assertEquals(Int(0), simplify(Mod(Int(-3), Int(3))));
         assertEquals(Int(0), simplify(Mod(Int(3), Int(3))));
+
+        assertEquals(Mod(a, Int(4)), simplify(Mod(Mod(a, Int(4)), Int(16))));
+        assertEquals(Mod(a, Int(-4)), simplify(Mod(Mod(a, Int(-4)), Int(4))));
+        assertEquals(Mod(a, Int(3)), simplify(Mod(Mod(a, Int(3)), Int(5))));
+        assertEquals(Mod(a, Int(4)), simplify(Mod(Mod(a, Int(16)), Int(4))));
+        assertEquals(Mod(Mod(a, Int(6)), Int(4)), simplify(Mod(Mod(a, Int(6)), Int(4))));
+        assertEquals(Mod(Mod(a, Int(0)), Int(4)), simplify(Mod(Mod(a, Int(0)), Int(4))));
     }
 
     @Test
@@ -317,6 +335,11 @@ public class ExprSimplifierTest {
         assertEquals(False(), simplify(Eq(Int(2), Int(-2))));
         assertEquals(True(), simplify(Eq(a, a)));
         assertEquals(Eq(a, b), simplify(Eq(a, b)));
+        assertEquals(x, simplify(Eq(Ite(x, Int(1), Int(0)), Int(1))));
+        assertEquals(Not(x), simplify(Eq(Ite(x, Int(1), Int(0)), Int(0))));
+        assertEquals(x, simplify(Eq(Int(1), Ite(x, Int(1), Int(0)))));
+        assertEquals(Not(x), simplify(Eq(Int(0), Ite(x, Int(1), Int(0)))));
+        assertEquals(x, simplify(Eq(Ite(x, Int(123), Int(321)), Int(123))));
     }
 
     @Test
@@ -325,6 +348,11 @@ public class ExprSimplifierTest {
         assertEquals(True(), simplify(Neq(Int(2), Int(-2))));
         assertEquals(False(), simplify(Neq(a, a)));
         assertEquals(Neq(a, b), simplify(Neq(a, b)));
+        assertEquals(x, simplify(Neq(Ite(x, Int(1), Int(0)), Int(0))));
+        assertEquals(Not(x), simplify(Neq(Ite(x, Int(1), Int(0)), Int(1))));
+        assertEquals(x, simplify(Neq(Int(0), Ite(x, Int(1), Int(0)))));
+        assertEquals(Not(x), simplify(Neq(Int(1), Ite(x, Int(1), Int(0)))));
+        assertEquals(Not(x), simplify(Neq(Ite(x, Int(123), Int(321)), Int(123))));
     }
 
     @Test
@@ -447,6 +475,19 @@ public class ExprSimplifierTest {
                                 Bv(new boolean[] {false, true, false, false}),
                                 Bv(new boolean[] {false, false, true, true}))));
         assertEquals(Bv(new boolean[] {false, false, false, true}), simplify(BvExprs.UDiv(e, e)));
+        assertEquals(
+                Bv(new boolean[] {false, true, false, false}),
+                simplify(
+                        BvExprs.UDiv(
+                                Bv(new boolean[] {true, true, false, false}),
+                                Bv(new boolean[] {false, false, true, true}))));
+        // SMT-LIB bvudiv by zero is all ones
+        assertEquals(
+                Bv(new boolean[] {true, true, true, true}),
+                simplify(
+                        BvExprs.UDiv(
+                                Bv(new boolean[] {false, true, false, true}),
+                                Bv(new boolean[] {false, false, false, false}))));
     }
 
     @Test
@@ -469,6 +510,32 @@ public class ExprSimplifierTest {
                                 Bv(new boolean[] {false, true, false, false}),
                                 Bv(new boolean[] {false, false, true, true}))));
         assertEquals(Bv(new boolean[] {false, false, false, false}), simplify(BvExprs.URem(e, e)));
+        // operands with the sign bit set are still read unsigned: 10 % 3, 5 % 8, 12 % 9
+        assertEquals(
+                Bv(new boolean[] {false, false, false, true}),
+                simplify(
+                        BvExprs.URem(
+                                Bv(new boolean[] {true, false, true, false}),
+                                Bv(new boolean[] {false, false, true, true}))));
+        assertEquals(
+                Bv(new boolean[] {false, true, false, true}),
+                simplify(
+                        BvExprs.URem(
+                                Bv(new boolean[] {false, true, false, true}),
+                                Bv(new boolean[] {true, false, false, false}))));
+        assertEquals(
+                Bv(new boolean[] {false, false, true, true}),
+                simplify(
+                        BvExprs.URem(
+                                Bv(new boolean[] {true, true, false, false}),
+                                Bv(new boolean[] {true, false, false, true}))));
+        // SMT-LIB bvurem by zero is the dividend
+        assertEquals(
+                Bv(new boolean[] {true, false, true, false}),
+                simplify(
+                        BvExprs.URem(
+                                Bv(new boolean[] {true, false, true, false}),
+                                Bv(new boolean[] {false, false, false, false}))));
     }
 
     @Test
@@ -576,6 +643,23 @@ public class ExprSimplifierTest {
                         BvExprs.Eq(
                                 Bv(new boolean[] {false, true, false, false}),
                                 Bv(new boolean[] {false, true, false, true}))));
+
+        BvLitExpr zero = Bv(new boolean[] {false, false, false, false});
+        BvLitExpr one = Bv(new boolean[] {false, false, false, true});
+
+        assertEquals(x, simplify(BvExprs.Eq(Ite(x, one, zero), one)));
+        assertEquals(Not(x), simplify(BvExprs.Eq(Ite(x, one, zero), zero)));
+        assertEquals(x, simplify(BvExprs.Eq(one, Ite(x, one, zero))));
+        assertEquals(Not(x), simplify(BvExprs.Eq(zero, Ite(x, one, zero))));
+        assertEquals(
+                x,
+                simplify(
+                        BvExprs.Eq(
+                                Ite(
+                                        x,
+                                        Bv(new boolean[] {false, true, false, true}),
+                                        Bv(new boolean[] {false, true, false, false})),
+                                Bv(new boolean[] {false, true, false, true}))));
     }
 
     @Test
@@ -591,6 +675,23 @@ public class ExprSimplifierTest {
                 simplify(
                         BvExprs.Neq(
                                 Bv(new boolean[] {false, true, false, false}),
+                                Bv(new boolean[] {false, true, false, true}))));
+
+        BvLitExpr zero = Bv(new boolean[] {false, false, false, false});
+        BvLitExpr one = Bv(new boolean[] {false, false, false, true});
+
+        assertEquals(x, simplify(BvExprs.Neq(Ite(x, one, zero), zero)));
+        assertEquals(Not(x), simplify(BvExprs.Neq(Ite(x, one, zero), one)));
+        assertEquals(x, simplify(BvExprs.Neq(zero, Ite(x, one, zero))));
+        assertEquals(Not(x), simplify(BvExprs.Neq(one, Ite(x, one, zero))));
+        assertEquals(
+                Not(x),
+                simplify(
+                        BvExprs.Neq(
+                                Ite(
+                                        x,
+                                        Bv(new boolean[] {false, true, false, true}),
+                                        Bv(new boolean[] {false, true, false, false})),
                                 Bv(new boolean[] {false, true, false, true}))));
     }
 
@@ -672,6 +773,22 @@ public class ExprSimplifierTest {
         assertEquals(a, simplify(Ite(True(), a, b)));
         assertEquals(b, simplify(Ite(False(), a, b)));
         assertEquals(a, simplify(Ite(True(), Ite(True(), Ite(True(), a, b), b), b)));
+    }
+
+    @Test
+    public void testPrime() {
+        final VarDecl<IntType> vv = Var("v", Int());
+        final VarDecl<IntType> vw = Var("w", Int());
+        final Expr<IntType> v = vv.getRef();
+        final Expr<IntType> w = vw.getRef();
+        final Valuation val = ImmutableValuation.builder().put(vv, Int(2)).put(ca, Int(5)).build();
+
+        assertEquals(Eq(Prime(v), Int(3)), simplify(Eq(Prime(v), Add(v, Int(1))), val));
+        assertEquals(Eq(Prime(v), w), simplify(Eq(Prime(v), w), val));
+        assertEquals(Prime(Prime(v)), simplify(Prime(Prime(v)), val));
+        assertEquals(Prime(v), simplify(Prime(Add(v, Int(0))), val));
+        assertEquals(Prime(Add(v, Int(5))), simplify(Prime(Add(v, a)), val));
+        assertEquals(Eq(Prime(v), v), simplify(Eq(Prime(v), v)));
     }
 
     // Array

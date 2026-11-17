@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -15,10 +15,9 @@
  */
 package hu.bme.mit.theta.c2xcfa
 
+import hu.bme.mit.theta.frontend.SourcePosition
 import hu.bme.mit.theta.frontend.transformation.model.statements.CStatement
 import hu.bme.mit.theta.xcfa.model.*
-import kotlin.math.max
-import kotlin.math.min
 
 data class CMetaData(
   val lineNumberStart: Int?,
@@ -30,55 +29,72 @@ data class CMetaData(
   val sourceText: String?,
   val astNodes: List<CStatement>,
   val functionName: String?,
+  // we only want to export metadata when we encounter the fist label for a statement
+  val notStatementStart: Boolean = false,
+  // start of the innermost C full expression of the label, null if unknown; see [targetPosition]
+  val fullExpression: SourcePosition? = null,
+  // set on the locations where a loop's controlling expression is evaluated, not combined
+  val loopHead: LoopHead? = null,
 ) : MetaData() {
 
+  private data class Position(val line: Int, val col: Int, val offset: Int?)
+
+  private fun startPosition(): Position? =
+    lineNumberStart?.takeIf { it > 0 }?.let { Position(it, colNumberStart ?: 0, offsetStart) }
+
+  private fun stopPosition(): Position? =
+    lineNumberStop?.takeIf { it > 0 }?.let { Position(it, colNumberStop ?: 0, offsetEnd) }
+
   // AST nodes must be in order of combination!
-  override fun combine(other: MetaData): MetaData {
-    if (other is CMetaData) {
-      return CMetaData(
-        lineNumberStart =
-          min(
-              lineNumberStart ?: other.lineNumberStart ?: -1,
-              other.lineNumberStart ?: lineNumberStart ?: -1,
-            )
-            .takeIf { it > 0 } ?: 0,
-        colNumberStart =
-          min(
-              colNumberStart ?: other.colNumberStart ?: -1,
-              other.colNumberStart ?: colNumberStart ?: -1,
-            )
-            .takeIf { it > 0 } ?: 0,
-        offsetStart =
-          min(offsetStart ?: other.offsetStart ?: -1, other.offsetStart ?: offsetStart ?: -1)
-            .takeIf { it > 0 } ?: 0,
-        lineNumberStop =
-          max(
-              lineNumberStop ?: other.lineNumberStop ?: -1,
-              other.lineNumberStop ?: lineNumberStop ?: -1,
-            )
-            .takeIf { it > 0 } ?: 0,
-        colNumberStop =
-          max(
-              colNumberStop ?: other.colNumberStop ?: -1,
-              other.colNumberStop ?: colNumberStop ?: -1,
-            )
-            .takeIf { it > 0 } ?: 0,
-        offsetEnd =
-          max(offsetEnd ?: other.offsetEnd ?: -1, other.offsetEnd ?: offsetEnd ?: -1).takeIf {
-            it > 0
-          } ?: 0,
-        sourceText = (sourceText ?: "") + (other.sourceText ?: ""),
-        astNodes = astNodes + other.astNodes,
-        functionName = functionName ?: other.functionName,
-      )
-    } else if (other is EmptyMetaData) {
-      return this
-    } else {
-      error(
-        "Cannot combine metadata of different types or different function names: $this vs $other"
-      )
+  override fun combine(other: MetaData): MetaData =
+    when (other) {
+      is CMetaData -> {
+        // line, column and offset of one end belong together, so each end comes from one side
+        val order = compareBy<Position>({ it.line }, { it.col })
+        val start = listOfNotNull(startPosition(), other.startPosition()).minWithOrNull(order)
+        val stop = listOfNotNull(stopPosition(), other.stopPosition()).maxWithOrNull(order)
+        CMetaData(
+          lineNumberStart = start?.line ?: 0,
+          colNumberStart = start?.col?.takeIf { it > 0 } ?: 0,
+          offsetStart = start?.offset?.takeIf { it > 0 } ?: 0,
+          lineNumberStop = stop?.line ?: 0,
+          colNumberStop = stop?.col?.takeIf { it > 0 } ?: 0,
+          offsetEnd = stop?.offset?.takeIf { it > 0 } ?: 0,
+          sourceText = (sourceText ?: "") + (other.sourceText ?: ""),
+          astNodes = astNodes + other.astNodes,
+          functionName = functionName ?: other.functionName,
+          fullExpression = fullExpression ?: other.fullExpression,
+        )
+      }
+
+      is EmptyMetaData -> this
+
+      else ->
+        error(
+          "Cannot combine metadata of different types or different function names: $this vs $other"
+        )
     }
+
+  /**
+   * Where a violation in this label is located: the start of its innermost full expression, else of
+   * its statement, or null if neither is known. Unlike exported positions, this is also known for a
+   * label that does not start its statement.
+   */
+  val targetPosition: SourcePosition?
+    get() =
+      fullExpression
+        ?: lineNumberStart
+          ?.takeIf { it > 0 }
+          ?.let { line -> colNumberStart?.let { SourcePosition(line, it) } }
+
+  override fun onLocationLost() {
+    loopHead?.markIncomplete()
   }
+
+  override fun keepsLocation(): Boolean = loopHead != null
+
+  override fun withoutLocationMarks(): MetaData =
+    if (loopHead == null) this else copy(loopHead = null)
 
   override fun isSubstantial(): Boolean {
     if (astNodes.isEmpty()) {
@@ -96,30 +112,19 @@ data class CMetaData(
     if (colNumberStart < 0 || colNumberStop < 0) {
       return false
     }
+    if (notStatementStart) {
+      return false
+    }
     return true
   }
+
+  val asExportableCMetadata: CMetaData? = if (notStatementStart) null else this
 }
 
-fun XcfaLabel.getCMetaData(): CMetaData? {
-  return if (this.metadata is CMetaData) {
-    this.metadata as CMetaData
-  } else {
-    null
-  }
-}
+fun XcfaLabel.getCMetaData(): CMetaData? = (metadata as? CMetaData)?.asExportableCMetadata
 
-fun XcfaLocation.getCMetaData(): CMetaData? {
-  return if (this.metadata is CMetaData) {
-    this.metadata as CMetaData
-  } else {
-    null
-  }
-}
+fun XcfaLocation.getCMetaData(): CMetaData? = (metadata as? CMetaData)?.asExportableCMetadata
 
-fun XcfaEdge.getCMetaData(): CMetaData? {
-  return if (this.metadata is CMetaData) {
-    this.metadata as CMetaData
-  } else {
-    null
-  }
-}
+fun XcfaEdge.getCMetaData(): CMetaData? = (metadata as? CMetaData)?.asExportableCMetadata
+
+fun MetaData.targetPosition(): SourcePosition? = (this as? CMetaData)?.targetPosition

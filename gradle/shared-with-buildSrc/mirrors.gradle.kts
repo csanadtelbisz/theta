@@ -16,4 +16,11 @@
 repositories {
     mavenCentral()
     mavenLocal()
+    // Z3 publishes its Java API to GitHub releases only.
+    ivy {
+        url = uri("https://github.com/Z3Prover/z3/releases/download")
+        patternLayout { artifact("z3-[revision]/[artifact]-[revision].[ext]") }
+        metadataSources { artifact() }
+        content { includeModule("com.microsoft", "z3") }
+    }
 }

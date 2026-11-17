@@ -25,13 +25,18 @@ import hu.bme.mit.theta.common.DispatchTable2;
 import hu.bme.mit.theta.common.Tuple2;
 import hu.bme.mit.theta.common.Utils;
 import hu.bme.mit.theta.common.collection.CollectionUtil;
+import hu.bme.mit.theta.core.decl.Decl;
+import hu.bme.mit.theta.core.decl.VarDecl;
+import hu.bme.mit.theta.core.model.ImmutableValuation;
 import hu.bme.mit.theta.core.model.Valuation;
 import hu.bme.mit.theta.core.type.Expr;
 import hu.bme.mit.theta.core.type.LitExpr;
 import hu.bme.mit.theta.core.type.Type;
 import hu.bme.mit.theta.core.type.anytype.Dereference;
 import hu.bme.mit.theta.core.type.anytype.IteExpr;
+import hu.bme.mit.theta.core.type.anytype.PrimeExpr;
 import hu.bme.mit.theta.core.type.anytype.RefExpr;
+import hu.bme.mit.theta.core.type.anytype.Reference;
 import hu.bme.mit.theta.core.type.arraytype.ArrayInitExpr;
 import hu.bme.mit.theta.core.type.arraytype.ArrayReadExpr;
 import hu.bme.mit.theta.core.type.arraytype.ArrayType;
@@ -104,6 +109,7 @@ public final class ExprSimplifier {
                     // Integer
 
                     .addCase(IntToRatExpr.class, this::simplifyIntToRat)
+                    .addCase(IntToBvExpr.class, this::simplifyIntToBv)
                     .addCase(IntAddExpr.class, this::simplifyIntAdd)
                     .addCase(IntSubExpr.class, this::simplifyIntSub)
                     .addCase(IntPosExpr.class, this::simplifyIntPos)
@@ -193,21 +199,26 @@ public final class ExprSimplifier {
                     .addCase(FpMaxExpr.class, this::simplifyFpMax)
                     .addCase(FpMinExpr.class, this::simplifyFpMin)
                     .addCase(FpSqrtExpr.class, this::simplifyFpSqrt)
+                    .addCase(FpMathFuncExpr.class, this::simplifyFpMathFunc)
                     .addCase(FpIsNanExpr.class, this::simplifyFpIsNan)
+                    .addCase(FpIsInfiniteExpr.class, this::simplifyFpIsInfinite)
+                    .addCase(FpIsZeroExpr.class, this::simplifyFpIsZero)
                     .addCase(FpFromBvExpr.class, this::simplifyFpFromBv)
                     .addCase(FpToBvExpr.class, this::simplifyFpToBv)
+                    .addCase(FpFromIeeeBvExpr.class, this::simplifyFpFromIeeeBv)
+                    .addCase(FpToIeeeBvExpr.class, this::simplifyFpToIeeeBv)
                     .addCase(FpToFpExpr.class, this::simplifyFpToFp)
 
                     // General
 
                     .addCase(RefExpr.class, this::simplifyRef)
                     .addCase(IteExpr.class, this::simplifyIte)
+                    .addCase(PrimeExpr.class, this::simplifyPrime)
 
                     // Reference
 
                     .addCase(Dereference.class, this::simplifyDereference)
-
-                    //            .addCase(Reference.class, this::simplifyReference)
+                    .addCase(Reference.class, this::simplifyReference)
 
                     // Default
 
@@ -269,8 +280,61 @@ public final class ExprSimplifier {
         return expr.with(cond, then, elze);
     }
 
+    /**
+     * A valuation binds the current state, so variables under a prime (the next state) must not be
+     * substituted: `x' = x + 1` with `x -> 2` is `x' = 3`, not `2' = 3`. Constants and params are
+     * time-independent and are still substituted.
+     */
+    private Expr<?> simplifyPrime(final PrimeExpr<?> expr, final Valuation val) {
+        final Valuation nextVal = withoutVars(val);
+        return expr.map(it -> simplify(it, nextVal));
+    }
+
+    private static Valuation withoutVars(final Valuation val) {
+        if (val.getDecls().stream().noneMatch(VarDecl.class::isInstance)) {
+            return val;
+        }
+        final ImmutableValuation.Builder builder = ImmutableValuation.builder();
+        for (final Decl<?> decl : val.getDecls()) {
+            if (!(decl instanceof VarDecl)) {
+                builder.put(decl, val.eval(decl).orElseThrow());
+            }
+        }
+        return builder.build();
+    }
+
+    private <ExprType extends Type> Expr<BoolType> unwrapIte(
+            Expr<ExprType> expr, LitExpr<ExprType> truth, boolean shouldEqual) {
+        if (expr instanceof IteExpr<ExprType> ite
+                && ite.getThen() instanceof LitExpr<ExprType> then
+                && ite.getElse() instanceof LitExpr<ExprType> elze) {
+            if (then.equals(truth) && !elze.equals(truth)) {
+                if (shouldEqual) return ite.getCond();
+                else return Not(ite.getCond());
+            } else if (!then.equals(truth) && elze.equals(truth)) {
+                if (shouldEqual) return Not(ite.getCond());
+                else return ite.getCond();
+            }
+        }
+        return null;
+    }
+
     private Expr<?> simplifyDereference(final Dereference<?, ?, ?> expr, final Valuation val) {
         return expr.map(it -> simplify(it, val));
+    }
+
+    /**
+     * A reference designates storage, not a value, so the operand naming that storage must survive
+     * substitution: `&x` is an address, and rewriting it to `&1` names nothing. Only the index of
+     * an array element is a value, so `&t[i]` may still fold to `&t[0]`.
+     */
+    private Expr<?> simplifyReference(final Reference<?, ?> expr, final Valuation val) {
+        if (!(expr.getExpr() instanceof Dereference<?, ?, ?> deref)) {
+            return expr;
+        }
+        final List<Expr<?>> ops = new ArrayList<>(deref.getOps());
+        ops.set(1, simplify(deref.getOffset(), val));
+        return expr.withOps(List.of(deref.withOps(ops)));
     }
 
     private Expr<?> simplifyArrayRead(final ArrayReadExpr<?, ?> expr, final Valuation val) {
@@ -286,7 +350,11 @@ public final class ExprSimplifier {
                         instanceof
                         LitExpr<?>) { // The index is required to be a literal so that we can use
             // 'equals' to compare it against existing keys in the array
-            return expr.eval(val);
+            // Evaluate the expression REBUILT from the already-simplified operands, not the
+            // original. Simplification can fold an operand to a literal without needing its
+            // variables (`x * 0` -> `0`), and re-evaluating the original then reaches those
+            // free variables and dies with NoSuchElementException out of RefExpr.eval.
+            return expr.with(arr, index).eval(val);
         }
         return expr.with(arr, index);
     }
@@ -303,7 +371,11 @@ public final class ExprSimplifier {
         if (arr instanceof LitExpr<?>
                 && index instanceof LitExpr<?>
                 && elem instanceof LitExpr<?>) {
-            return expr.eval(val);
+            // Evaluate the expression REBUILT from the already-simplified operands, not the
+            // original. Simplification can fold an operand to a literal without needing its
+            // variables (`x * 0` -> `0`), and re-evaluating the original then reaches those
+            // free variables and dies with NoSuchElementException out of RefExpr.eval.
+            return expr.with(arr, index, elem).eval(val);
         }
         return expr.with(arr, index, elem);
     }
@@ -453,10 +525,6 @@ public final class ExprSimplifier {
 
     private Expr<BoolType> simplifyOr(final OrExpr expr, final Valuation val) {
         final Set<Expr<BoolType>> ops = CollectionUtil.createSet();
-
-        if (expr.getOps().isEmpty()) {
-            return True();
-        }
 
         for (final Expr<BoolType> op : expr.getOps()) {
             final Expr<BoolType> opVisited = simplify(op, val);
@@ -919,6 +987,20 @@ public final class ExprSimplifier {
         } else if (leftOp instanceof IntModExpr
                 && ((IntModExpr) leftOp).getRightOp().equals(rightOp)) {
             return leftOp;
+        } else if (leftOp instanceof IntModExpr inner
+                && inner.getRightOp() instanceof IntLitExpr innerLit
+                && rightOp instanceof IntLitExpr outerLit) {
+            // A remainder is never negative: one below |b| is already reduced mod b, and
+            // reducing mod a multiple of |b| first leaves the result mod b unchanged.
+            final BigInteger a = innerLit.getValue().abs();
+            final BigInteger b = outerLit.getValue().abs();
+            if (a.signum() > 0 && b.signum() > 0) {
+                if (a.compareTo(b) <= 0) {
+                    return leftOp;
+                } else if (a.mod(b).signum() == 0) {
+                    return expr.with(inner.getLeftOp(), rightOp);
+                }
+            }
         }
 
         return expr.with(leftOp, rightOp);
@@ -944,15 +1026,20 @@ public final class ExprSimplifier {
         final Expr<IntType> leftOp = simplify(expr.getLeftOp(), val);
         final Expr<IntType> rightOp = simplify(expr.getRightOp(), val);
 
-        // special case for C: (= (ite expr 1 0) 0) ==> not(expr)
-        if (rightOp instanceof IntLitExpr litExpr
-                && litExpr.getValue().intValue() == 0
-                && leftOp instanceof IteExpr<IntType> ite
-                && ite.getThen() instanceof IntLitExpr then
-                && then.getValue().intValue() == 1
-                && ite.getElse() instanceof IntLitExpr elze
-                && elze.getValue().intValue() == 0) {
-            return Not(ite.getCond());
+        // special cases for C:
+        // (= (ite expr 1 0) 1) ==> expr
+        // (= (ite expr 1 0) 0) ==> !expr
+        if (rightOp instanceof IntLitExpr litExpr) {
+            final Expr<BoolType> iteCond = unwrapIte(leftOp, litExpr, true);
+            if (iteCond != null) return iteCond;
+        }
+
+        // special cases for C:
+        // (= 1 (ite expr 1 0)) ==> expr
+        // (= 0 (ite expr 1 0)) ==> !expr
+        if (leftOp instanceof IntLitExpr litExpr) {
+            final Expr<BoolType> iteCond = unwrapIte(rightOp, litExpr, true);
+            if (iteCond != null) return iteCond;
         }
 
         if (leftOp instanceof IntLitExpr && rightOp instanceof IntLitExpr) {
@@ -970,15 +1057,20 @@ public final class ExprSimplifier {
         final Expr<IntType> leftOp = simplify(expr.getLeftOp(), val);
         final Expr<IntType> rightOp = simplify(expr.getRightOp(), val);
 
-        // special case for C: (\= (ite expr 1 0) 0) ==> expr
-        if (rightOp instanceof IntLitExpr litExpr
-                && litExpr.getValue().intValue() == 0
-                && leftOp instanceof IteExpr<IntType> ite
-                && ite.getThen() instanceof IntLitExpr then
-                && then.getValue().intValue() == 1
-                && ite.getElse() instanceof IntLitExpr elze
-                && elze.getValue().intValue() == 0) {
-            return ite.getCond();
+        // special cases for C:
+        // (\= (ite expr 1 0) 0) ==> expr
+        // (\= (ite expr 1 0) 1) ==> !expr
+        if (rightOp instanceof IntLitExpr litExpr) {
+            final Expr<BoolType> iteCond = unwrapIte(leftOp, litExpr, false);
+            if (iteCond != null) return iteCond;
+        }
+
+        // special cases for C:
+        // (\= 0 (ite expr 1 0)) ==> expr
+        // (\= 1 (ite expr 1 0)) ==> !expr
+        if (leftOp instanceof IntLitExpr litExpr) {
+            final Expr<BoolType> iteCond = unwrapIte(rightOp, litExpr, false);
+            if (iteCond != null) return iteCond;
         }
 
         if (leftOp instanceof IntLitExpr && rightOp instanceof IntLitExpr) {
@@ -1066,6 +1158,17 @@ public final class ExprSimplifier {
         }
 
         return expr.with(leftOp, rightOp);
+    }
+
+    private Expr<BvType> simplifyIntToBv(final IntToBvExpr expr, final Valuation val) {
+        final Expr<IntType> op = simplify(expr.getOp(), val);
+
+        if (op instanceof IntLitExpr) {
+            final IntLitExpr litOp = (IntLitExpr) op;
+            return expr.with(op).eval(val);
+        }
+
+        return expr.with(op);
     }
 
     private Expr<BoolType> simplifyEnumEqExpr(final EnumEqExpr expr, final Valuation val) {
@@ -1186,7 +1289,7 @@ public final class ExprSimplifier {
                 ops.add(opVisited);
             }
         }
-        BvLitExpr value = Bv(new boolean[expr.getType().getSize()]);
+        BvLitExpr value = Bv(new boolean[expr.getType().getSize()], expr.getType().getSignedness());
 
         for (final Iterator<Expr<BvType>> iterator = ops.iterator(); iterator.hasNext(); ) {
             final Expr<BvType> op = iterator.next();
@@ -1197,12 +1300,13 @@ public final class ExprSimplifier {
             }
         }
 
-        if (!value.eq(Bv(new boolean[expr.getType().getSize()])).getValue()) {
+        if (!value.eq(Bv(new boolean[expr.getType().getSize()], expr.getType().getSignedness()))
+                .getValue()) {
             ops.add(value);
         }
 
         if (ops.isEmpty()) {
-            return Bv(new boolean[expr.getType().getSize()]);
+            return Bv(new boolean[expr.getType().getSize()], expr.getType().getSignedness());
         } else if (ops.size() == 1) {
             return Utils.singleElementOf(ops);
         }
@@ -1220,7 +1324,8 @@ public final class ExprSimplifier {
             return leftLit.sub(rightLit);
         }
 
-        final BvLitExpr ZEROS = Bv(new boolean[expr.getType().getSize()]);
+        final BvLitExpr ZEROS =
+                Bv(new boolean[expr.getType().getSize()], expr.getType().getSignedness());
 
         if (rightOp instanceof BvLitExpr rightLit && rightLit.equals(ZEROS)) {
             return leftOp;
@@ -1284,8 +1389,10 @@ public final class ExprSimplifier {
             }
         }
 
-        final BvLitExpr ZERO = Bv(new boolean[expr.getType().getSize()]);
-        final BvLitExpr ONE = Bv(new boolean[expr.getType().getSize()]);
+        final BvLitExpr ZERO =
+                Bv(new boolean[expr.getType().getSize()], expr.getType().getSignedness());
+        final BvLitExpr ONE =
+                Bv(new boolean[expr.getType().getSize()], expr.getType().getSignedness());
         ONE.getValue()[expr.getType().getSize() - 1] = true; // 1
 
         BvLitExpr value = ONE;
@@ -1326,7 +1433,8 @@ public final class ExprSimplifier {
 
         if (leftOp instanceof RefExpr && rightOp instanceof RefExpr) {
             if (leftOp.equals(rightOp)) {
-                final BvLitExpr ONE = Bv(new boolean[expr.getType().getSize()]);
+                final BvLitExpr ONE =
+                        Bv(new boolean[expr.getType().getSize()], expr.getType().getSignedness());
                 ONE.getValue()[expr.getType().getSize() - 1] = true; // 1
                 return ONE;
             }
@@ -1347,7 +1455,8 @@ public final class ExprSimplifier {
 
         if (leftOp instanceof RefExpr && rightOp instanceof RefExpr) {
             if (leftOp.equals(rightOp)) {
-                final BvLitExpr ONE = Bv(new boolean[expr.getType().getSize()]);
+                final BvLitExpr ONE =
+                        Bv(new boolean[expr.getType().getSize()], expr.getType().getSignedness());
                 ONE.getValue()[expr.getType().getSize() - 1] = true; // 1
                 return ONE;
             }
@@ -1368,7 +1477,7 @@ public final class ExprSimplifier {
 
         if (leftOp instanceof RefExpr && rightOp instanceof RefExpr) {
             if (leftOp.equals(rightOp)) {
-                return Bv(new boolean[expr.getType().getSize()]);
+                return Bv(new boolean[expr.getType().getSize()], expr.getType().getSignedness());
             }
         }
 
@@ -1387,7 +1496,7 @@ public final class ExprSimplifier {
 
         if (leftOp instanceof RefExpr && rightOp instanceof RefExpr) {
             if (leftOp.equals(rightOp)) {
-                return Bv(new boolean[expr.getType().getSize()]);
+                return Bv(new boolean[expr.getType().getSize()], expr.getType().getSignedness());
             }
         }
 
@@ -1406,7 +1515,7 @@ public final class ExprSimplifier {
 
         if (leftOp instanceof RefExpr && rightOp instanceof RefExpr) {
             if (leftOp.equals(rightOp)) {
-                return Bv(new boolean[expr.getType().getSize()]);
+                return Bv(new boolean[expr.getType().getSize()], expr.getType().getSignedness());
             }
         }
 
@@ -1425,7 +1534,7 @@ public final class ExprSimplifier {
                 ops.add(opVisited);
             }
         }
-        BvLitExpr ONES = Bv(new boolean[expr.getType().getSize()]);
+        BvLitExpr ONES = Bv(new boolean[expr.getType().getSize()], expr.getType().getSignedness());
         for (int i = 0; i < expr.getType().getSize(); i++) {
             ONES.getValue()[i] = true;
         }
@@ -1466,7 +1575,7 @@ public final class ExprSimplifier {
                 ops.add(opVisited);
             }
         }
-        BvLitExpr ZEROS = Bv(new boolean[expr.getType().getSize()]);
+        BvLitExpr ZEROS = Bv(new boolean[expr.getType().getSize()], expr.getType().getSignedness());
 
         BvLitExpr value = ZEROS;
 
@@ -1504,7 +1613,7 @@ public final class ExprSimplifier {
                 ops.add(opVisited);
             }
         }
-        BvLitExpr ZEROS = Bv(new boolean[expr.getType().getSize()]);
+        BvLitExpr ZEROS = Bv(new boolean[expr.getType().getSize()], expr.getType().getSignedness());
 
         BvLitExpr value = ZEROS;
 
@@ -1615,15 +1724,20 @@ public final class ExprSimplifier {
         final Expr<BvType> leftOp = simplify(expr.getLeftOp(), val);
         final Expr<BvType> rightOp = simplify(expr.getRightOp(), val);
 
-        // special case for C: (= (ite expr 1 0) 0) ==> not(expr)
-        if (rightOp instanceof BvLitExpr litExpr
-                && BvUtils.neutralBvLitExprToBigInteger(litExpr).equals(BigInteger.ZERO)
-                && leftOp instanceof IteExpr<BvType> ite
-                && ite.getThen() instanceof BvLitExpr then
-                && BvUtils.neutralBvLitExprToBigInteger(then).equals(BigInteger.ONE)
-                && ite.getElse() instanceof BvLitExpr elze
-                && BvUtils.neutralBvLitExprToBigInteger(elze).equals(BigInteger.ZERO)) {
-            return Not(ite.getCond());
+        // special cases for C:
+        // (= (ite expr 1 0) 1) ==> expr
+        // (= (ite expr 1 0) 0) ==> !expr
+        if (rightOp instanceof BvLitExpr litExpr) {
+            final Expr<BoolType> iteCond = unwrapIte(leftOp, litExpr, true);
+            if (iteCond != null) return iteCond;
+        }
+
+        // special cases for C:
+        // (= 1 (ite expr 1 0)) ==> expr
+        // (= 0 (ite expr 1 0)) ==> !expr
+        if (leftOp instanceof BvLitExpr litExpr) {
+            final Expr<BoolType> iteCond = unwrapIte(rightOp, litExpr, true);
+            if (iteCond != null) return iteCond;
         }
 
         if (leftOp instanceof BvLitExpr && rightOp instanceof BvLitExpr) {
@@ -1641,15 +1755,20 @@ public final class ExprSimplifier {
         final Expr<BvType> leftOp = simplify(expr.getLeftOp(), val);
         final Expr<BvType> rightOp = simplify(expr.getRightOp(), val);
 
-        // special case for C: (\= (ite expr 1 0) 0) ==> expr
-        if (rightOp instanceof BvLitExpr litExpr
-                && BvUtils.neutralBvLitExprToBigInteger(litExpr).equals(BigInteger.ZERO)
-                && leftOp instanceof IteExpr<BvType> ite
-                && ite.getThen() instanceof BvLitExpr then
-                && BvUtils.neutralBvLitExprToBigInteger(then).equals(BigInteger.ONE)
-                && ite.getElse() instanceof BvLitExpr elze
-                && BvUtils.neutralBvLitExprToBigInteger(elze).equals(BigInteger.ZERO)) {
-            return ite.getCond();
+        // special cases for C:
+        // (\= (ite expr 1 0) 0) ==> expr
+        // (\= (ite expr 1 0) 1) ==> !expr
+        if (rightOp instanceof BvLitExpr litExpr) {
+            final Expr<BoolType> iteCond = unwrapIte(leftOp, litExpr, false);
+            if (iteCond != null) return iteCond;
+        }
+
+        // special cases for C:
+        // (\= 0 (ite expr 1 0)) ==> expr
+        // (\= 1 (ite expr 1 0)) ==> !expr
+        if (leftOp instanceof BvLitExpr litExpr) {
+            final Expr<BoolType> iteCond = unwrapIte(rightOp, litExpr, false);
+            if (iteCond != null) return iteCond;
         }
 
         if (leftOp instanceof BvLitExpr && rightOp instanceof BvLitExpr) {
@@ -1816,41 +1935,33 @@ public final class ExprSimplifier {
     }
 
     private Expr<FpType> simplifyFpAdd(final FpAddExpr expr, final Valuation val) {
+        // An n-ary addition is a left fold, and IEEE addition is neither associative nor has 0.0
+        // as identity (-0.0 + 0.0 is 0.0): only a left-nested addition and a leading run of
+        // literals may be folded.
         final List<Expr<FpType>> ops = new ArrayList<>();
-
         for (final Expr<FpType> op : expr.getOps()) {
-            final Expr<FpType> opVisited = simplify(op, val);
-            if (opVisited instanceof FpAddExpr) {
-                final FpAddExpr addOp = (FpAddExpr) opVisited;
-                ops.addAll(addOp.getOps());
-            } else {
-                ops.add(opVisited);
-            }
+            ops.add(simplify(op, val));
         }
-        final FpLitExpr zero =
-                FpUtils.bigFloatToFpLitExpr(
-                        BigFloat.zero(expr.getType().getSignificand()), expr.getType());
-        FpLitExpr value = zero;
-
-        for (final Iterator<Expr<FpType>> iterator = ops.iterator(); iterator.hasNext(); ) {
-            final Expr<FpType> op = iterator.next();
-            if (op instanceof FpLitExpr) {
-                final FpLitExpr litOp = (FpLitExpr) op;
-                value = value.add(expr.getRoundingMode(), litOp);
-                iterator.remove();
-            }
+        if (ops.get(0) instanceof FpAddExpr first
+                && first.getRoundingMode() == expr.getRoundingMode()) {
+            ops.remove(0);
+            ops.addAll(0, first.getOps());
         }
 
-        if (!value.equals(zero)) {
-            ops.add(value);
+        FpLitExpr value = null;
+        int literals = 0;
+        while (literals < ops.size() && ops.get(literals) instanceof FpLitExpr litOp) {
+            value = value == null ? litOp : value.add(expr.getRoundingMode(), litOp);
+            literals++;
         }
-
-        if (ops.isEmpty()) {
-            return zero;
-        } else if (ops.size() == 1) {
-            return Utils.singleElementOf(ops);
+        if (literals == ops.size()) {
+            return value;
+        } else if (literals > 1) {
+            final List<Expr<FpType>> rest = new ArrayList<>();
+            rest.add(value);
+            rest.addAll(ops.subList(literals, ops.size()));
+            return expr.with(rest);
         }
-
         return expr.with(ops);
     }
 
@@ -1864,13 +1975,7 @@ public final class ExprSimplifier {
             return leftLit.sub(expr.getRoundingMode(), rightLit);
         }
 
-        if (leftOp instanceof RefExpr && rightOp instanceof RefExpr) {
-            if (leftOp.equals(rightOp)) {
-                return FpUtils.bigFloatToFpLitExpr(
-                        BigFloat.zero(expr.getType().getSignificand()), expr.getType());
-            }
-        }
-
+        // x - x is not 0.0 for NaN and infinities
         return expr.with(leftOp, rightOp);
     }
 
@@ -1920,6 +2025,16 @@ public final class ExprSimplifier {
             return Bool(
                     (((FpLitExpr) op).isNegativeInfinity()
                             || ((FpLitExpr) op).isPositiveInfinity()));
+        }
+
+        return expr.with(op);
+    }
+
+    private Expr<BoolType> simplifyFpIsZero(final FpIsZeroExpr expr, final Valuation val) {
+        final Expr<FpType> op = simplify(expr.getOp(), val);
+
+        if (op instanceof FpLitExpr litExpr) {
+            return Bool((litExpr.isNegativeZero() || litExpr.isPositiveZero()));
         }
 
         return expr.with(op);
@@ -2005,6 +2120,22 @@ public final class ExprSimplifier {
         final Expr<FpType> leftOp = simplify(expr.getLeftOp(), val);
         final Expr<FpType> rightOp = simplify(expr.getRightOp(), val);
 
+        // special cases for C:
+        // (= (ite expr 1 0) 1) ==> expr
+        // (= (ite expr 1 0) 0) ==> !expr
+        if (rightOp instanceof FpLitExpr litExpr) {
+            final Expr<BoolType> iteCond = unwrapIte(leftOp, litExpr, true);
+            if (iteCond != null) return iteCond;
+        }
+
+        // special cases for C:
+        // (= 1 (ite expr 1 0)) ==> expr
+        // (= 0 (ite expr 1 0)) ==> !expr
+        if (leftOp instanceof FpLitExpr litExpr) {
+            final Expr<BoolType> iteCond = unwrapIte(rightOp, litExpr, true);
+            if (iteCond != null) return iteCond;
+        }
+
         if (leftOp instanceof FpLitExpr lLit && rightOp instanceof FpLitExpr rLit) {
             return lLit.eq(rLit);
         }
@@ -2028,7 +2159,11 @@ public final class ExprSimplifier {
         final Expr<FpType> rightOp = simplify(expr.getRightOp(), val);
 
         if (leftOp instanceof FpLitExpr && rightOp instanceof FpLitExpr) {
-            return expr.eval(val);
+            // Evaluate the expression REBUILT from the already-simplified operands, not the
+            // original. Simplification can fold an operand to a literal without needing its
+            // variables (`x * 0` -> `0`), and re-evaluating the original then reaches those
+            // free variables and dies with NoSuchElementException out of RefExpr.eval.
+            return expr.with(leftOp, rightOp).eval(val);
         }
 
         return expr.with(leftOp, rightOp);
@@ -2039,7 +2174,11 @@ public final class ExprSimplifier {
         final Expr<FpType> rightOp = simplify(expr.getRightOp(), val);
 
         if (leftOp instanceof FpLitExpr && rightOp instanceof FpLitExpr) {
-            return expr.eval(val);
+            // Evaluate the expression REBUILT from the already-simplified operands, not the
+            // original. Simplification can fold an operand to a literal without needing its
+            // variables (`x * 0` -> `0`), and re-evaluating the original then reaches those
+            // free variables and dies with NoSuchElementException out of RefExpr.eval.
+            return expr.with(leftOp, rightOp).eval(val);
         }
 
         return expr.with(leftOp, rightOp);
@@ -2050,7 +2189,11 @@ public final class ExprSimplifier {
         final Expr<FpType> rightOp = simplify(expr.getRightOp(), val);
 
         if (leftOp instanceof FpLitExpr && rightOp instanceof FpLitExpr) {
-            return expr.eval(val);
+            // Evaluate the expression REBUILT from the already-simplified operands, not the
+            // original. Simplification can fold an operand to a literal without needing its
+            // variables (`x * 0` -> `0`), and re-evaluating the original then reaches those
+            // free variables and dies with NoSuchElementException out of RefExpr.eval.
+            return expr.with(leftOp, rightOp).eval(val);
         }
 
         return expr.with(leftOp, rightOp);
@@ -2061,7 +2204,11 @@ public final class ExprSimplifier {
         final Expr<FpType> rightOp = simplify(expr.getRightOp(), val);
 
         if (leftOp instanceof FpLitExpr && rightOp instanceof FpLitExpr) {
-            return expr.eval(val);
+            // Evaluate the expression REBUILT from the already-simplified operands, not the
+            // original. Simplification can fold an operand to a literal without needing its
+            // variables (`x * 0` -> `0`), and re-evaluating the original then reaches those
+            // free variables and dies with NoSuchElementException out of RefExpr.eval.
+            return expr.with(leftOp, rightOp).eval(val);
         }
 
         return expr.with(leftOp, rightOp);
@@ -2071,14 +2218,27 @@ public final class ExprSimplifier {
         final Expr<FpType> leftOp = simplify(expr.getLeftOp(), val);
         final Expr<FpType> rightOp = simplify(expr.getRightOp(), val);
 
-        if (leftOp instanceof FpLitExpr lLit && rightOp instanceof FpLitExpr rLit) {
-            return lLit.neq(rLit);
-        } else if (leftOp instanceof RefExpr && rightOp instanceof RefExpr) {
-            if (level != LITERAL_ONLY && leftOp.equals(rightOp)) {
-                return False();
-            }
+        // special cases for C:
+        // (\= (ite expr 1 0) 0) ==> expr
+        // (\= (ite expr 1 0) 1) ==> !expr
+        if (rightOp instanceof FpLitExpr litExpr) {
+            final Expr<BoolType> iteCond = unwrapIte(leftOp, litExpr, false);
+            if (iteCond != null) return iteCond;
         }
 
+        // special cases for C:
+        // (\= 0 (ite expr 1 0)) ==> expr
+        // (\= 1 (ite expr 1 0)) ==> !expr
+        if (leftOp instanceof FpLitExpr litExpr) {
+            final Expr<BoolType> iteCond = unwrapIte(rightOp, litExpr, false);
+            if (iteCond != null) return iteCond;
+        }
+
+        if (leftOp instanceof FpLitExpr lLit && rightOp instanceof FpLitExpr rLit) {
+            return lLit.neq(rLit);
+        }
+
+        // x != x holds for NaN, so it must not fold to false
         return expr.with(leftOp, rightOp);
     }
 
@@ -2087,7 +2247,11 @@ public final class ExprSimplifier {
         final Expr<FpType> rightOp = simplify(expr.getRightOp(), val);
 
         if (leftOp instanceof FpLitExpr && rightOp instanceof FpLitExpr) {
-            return expr.eval(val);
+            // Evaluate the expression REBUILT from the already-simplified operands, not the
+            // original. Simplification can fold an operand to a literal without needing its
+            // variables (`x * 0` -> `0`), and re-evaluating the original then reaches those
+            // free variables and dies with NoSuchElementException out of RefExpr.eval.
+            return expr.with(leftOp, rightOp).eval(val);
         }
 
         return expr.with(leftOp, rightOp);
@@ -2098,7 +2262,11 @@ public final class ExprSimplifier {
         final Expr<FpType> rightOp = simplify(expr.getRightOp(), val);
 
         if (leftOp instanceof FpLitExpr && rightOp instanceof FpLitExpr) {
-            return expr.eval(val);
+            // Evaluate the expression REBUILT from the already-simplified operands, not the
+            // original. Simplification can fold an operand to a literal without needing its
+            // variables (`x * 0` -> `0`), and re-evaluating the original then reaches those
+            // free variables and dies with NoSuchElementException out of RefExpr.eval.
+            return expr.with(leftOp, rightOp).eval(val);
         }
 
         return expr.with(leftOp, rightOp);
@@ -2108,9 +2276,25 @@ public final class ExprSimplifier {
         final Expr<FpType> op = simplify(expr.getOp(), val);
 
         if (op instanceof FpLitExpr) {
-            return expr.eval(val);
+            // Evaluate the expression REBUILT from the already-simplified operands, not the
+            // original. Simplification can fold an operand to a literal without needing its
+            // variables (`x * 0` -> `0`), and re-evaluating the original then reaches those
+            // free variables and dies with NoSuchElementException out of RefExpr.eval.
+            return expr.with(op).eval(val);
         }
 
+        return expr.with(op);
+    }
+
+    /** Folds only the exact special values: any other result is the program's libm's to give. */
+    private Expr<FpType> simplifyFpMathFunc(final FpMathFuncExpr expr, final Valuation val) {
+        final Expr<FpType> op = simplify(expr.getOp(), val);
+        if (op instanceof FpLitExpr lit) {
+            final var special = expr.getFunction().specialValue(lit);
+            if (special.isPresent()) {
+                return special.get();
+            }
+        }
         return expr.with(op);
     }
 
@@ -2118,7 +2302,11 @@ public final class ExprSimplifier {
         final Expr<BvType> sgn = simplify(expr.getOp(), val);
 
         if (sgn instanceof BvLitExpr) {
-            return expr.eval(val);
+            // Evaluate the expression REBUILT from the already-simplified operands, not the
+            // original. Simplification can fold an operand to a literal without needing its
+            // variables (`x * 0` -> `0`), and re-evaluating the original then reaches those
+            // free variables and dies with NoSuchElementException out of RefExpr.eval.
+            return expr.with(sgn).eval(val);
         }
 
         return expr.with(sgn);
@@ -2128,7 +2316,35 @@ public final class ExprSimplifier {
         final Expr<FpType> op = simplify(expr.getOp(), val);
 
         if (op instanceof FpLitExpr) {
-            return expr.eval(val);
+            // Evaluate the expression REBUILT from the already-simplified operands, not the
+            // original. Simplification can fold an operand to a literal without needing its
+            // variables (`x * 0` -> `0`), and re-evaluating the original then reaches those
+            // free variables and dies with NoSuchElementException out of RefExpr.eval.
+            return expr.with(op).eval(val);
+        }
+        return expr.with(op);
+    }
+
+    private Expr<FpType> simplifyFpFromIeeeBv(final FpFromIeeeBvExpr expr, final Valuation val) {
+        final Expr<BvType> op = simplify(expr.getOp(), val);
+        if (op instanceof BvLitExpr) {
+            // Evaluate the expression REBUILT from the already-simplified operands, not the
+            // original. Simplification can fold an operand to a literal without needing its
+            // variables (`x * 0` -> `0`), and re-evaluating the original then reaches those
+            // free variables and dies with NoSuchElementException out of RefExpr.eval.
+            return expr.with(op).eval(val);
+        }
+        return expr.with(op);
+    }
+
+    private Expr<BvType> simplifyFpToIeeeBv(final FpToIeeeBvExpr expr, final Valuation val) {
+        final Expr<FpType> op = simplify(expr.getOp(), val);
+        if (op instanceof FpLitExpr) {
+            // Evaluate the expression REBUILT from the already-simplified operands, not the
+            // original. Simplification can fold an operand to a literal without needing its
+            // variables (`x * 0` -> `0`), and re-evaluating the original then reaches those
+            // free variables and dies with NoSuchElementException out of RefExpr.eval.
+            return expr.with(op).eval(val);
         }
         return expr.with(op);
     }
@@ -2137,7 +2353,11 @@ public final class ExprSimplifier {
         final Expr<FpType> op = simplify(expr.getOp(), val);
 
         if (op instanceof FpLitExpr) {
-            return expr.eval(val);
+            // Evaluate the expression REBUILT from the already-simplified operands, not the
+            // original. Simplification can fold an operand to a literal without needing its
+            // variables (`x * 0` -> `0`), and re-evaluating the original then reaches those
+            // free variables and dies with NoSuchElementException out of RefExpr.eval.
+            return expr.with(op).eval(val);
         } else if (op instanceof FpToFpExpr) {
             return simplify(expr.with(((FpToFpExpr) op).getOp()), val);
         }

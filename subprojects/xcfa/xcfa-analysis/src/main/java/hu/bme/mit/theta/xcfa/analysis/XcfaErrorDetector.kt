@@ -19,6 +19,7 @@ import hu.bme.mit.theta.analysis.expr.ExprState
 import hu.bme.mit.theta.analysis.expr.refinement.ExprTraceChecker
 import hu.bme.mit.theta.analysis.expr.refinement.Refutation
 import hu.bme.mit.theta.analysis.ptr.PtrState
+import hu.bme.mit.theta.frontend.ParseContext
 import hu.bme.mit.theta.xcfa.ErrorDetection
 import hu.bme.mit.theta.xcfa.ErrorDetection.*
 import java.util.function.Predicate
@@ -27,18 +28,21 @@ private typealias S = XcfaState<out PtrState<out ExprState>>
 
 fun interface XcfaErrorDetector : Predicate<S> {
 
-  fun exprTraceCheckerWrapper(
-    exprTraceChecker: ExprTraceChecker<Refutation>
-  ): ExprTraceChecker<Refutation> = exprTraceChecker
+  fun <T : Refutation> exprTraceCheckerWrapper(
+    exprTraceChecker: ExprTraceChecker<T>
+  ): ExprTraceChecker<T> = exprTraceChecker
 }
 
-fun getXcfaErrorDetector(errorDetection: ErrorDetection): XcfaErrorDetector =
+fun getXcfaErrorDetector(
+  errorDetection: ErrorDetection,
+  parseContext: ParseContext,
+): XcfaErrorDetector =
   when (errorDetection) { // TODO: when refactoring prop in xcfa, it has to be added here as well?
     NO_ERROR -> XcfaErrorDetector { false }
     ERROR_LOCATION,
     NO_ASSERTION_VIOLATION ->
       XcfaErrorDetector { s -> s.processes.any { it.value.locs.peek().error } }
-    DATA_RACE -> getDataRaceDetector()
+    DATA_RACE -> getDataRaceDetector(parseContext)
     else ->
       error(
         "The error detection mode $errorDetection cannot be converted to a state predicate. Consider using a specification transformation."

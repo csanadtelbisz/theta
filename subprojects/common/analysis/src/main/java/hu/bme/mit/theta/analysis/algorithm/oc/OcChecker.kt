@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -16,7 +16,9 @@
 package hu.bme.mit.theta.analysis.algorithm.oc
 
 import hu.bme.mit.theta.core.decl.VarDecl
+import hu.bme.mit.theta.core.type.Expr
 import hu.bme.mit.theta.core.type.booltype.BoolExprs.*
+import hu.bme.mit.theta.core.type.booltype.BoolType
 import hu.bme.mit.theta.solver.Solver
 import hu.bme.mit.theta.solver.SolverStatus
 
@@ -34,6 +36,9 @@ internal inline fun <reified T> Array<Array<T?>>.copy(): Array<Array<T?>> =
 interface IOcChecker<E : Event> {
 
   val solver: Solver
+
+  /** Assumed by the next [check] where the checker supports it, instead of a solver scope. */
+  var assumption: Expr<BoolType>?
 
   /**
    * Checks the consistency of the event graph (i.e., if there is a partial order of events
@@ -55,6 +60,24 @@ interface IOcChecker<E : Event> {
   ): SolverStatus?
 
   /**
+   * Asserts the consistency of the event graph once, for [check]s under later solver scopes to
+   * share.
+   *
+   * @return whether the encoding was asserted: a checker that returned false encodes it in [check]
+   */
+  fun prepare(
+    events: Map<VarDecl<*>, Map<Int, List<E>>>,
+    pos: List<Relation<E>>,
+    ppos: BooleanGlobalRelation,
+    rfs: Map<VarDecl<*>, Set<Relation<E>>>,
+    wss: Map<VarDecl<*>, Set<Relation<E>>>,
+  ): Boolean = false
+
+  /** Returns the condition when the two events are racing. */
+  fun raceCondition(e1: E, e2: E): Expr<BoolType> =
+    throw UnsupportedOperationException("Data race checking is not supported by this OC checker.")
+
+  /**
    * Get the discovered relations represented by their reasons between the events (or more exactly
    * between atomic blocks, see Event::clkId). You may index the relation by clkIds:
    * ```
@@ -72,6 +95,14 @@ interface IOcChecker<E : Event> {
 }
 
 abstract class OcChecker<E : Event> : IOcChecker<E> {
+  override var assumption: Expr<BoolType>? = null
+
+  /**
+   * Called on a satisfiable check: completes the constraints an encoding left out as unnecessary
+   * for a refutation, and returns the status under them, with a model that is an execution.
+   */
+  open fun distinctModel(): SolverStatus? = SolverStatus.SAT
+
   protected fun <E : Event> addWsCond(ws1: Relation<E>, ws2: Relation<E>) {
     val wsGuard = And(ws1.from.guardExpr, ws1.to.guardExpr)
     val wsCond = { ws: Relation<E> -> Imply(ws.declRef, wsGuard) }
@@ -93,14 +124,45 @@ abstract class OcCheckerBase<E : Event> : OcChecker<E>() {
 
   protected abstract fun propagate(reason: Reason?): Boolean
 
+  /** Program-order successors of each event within its own atomic unit (clkId). */
+  private var poInClk: Map<E, List<E>> = mapOf()
+  private val poAfterInClk = mutableMapOf<E, Set<E>>()
+
+  /** Has to be called with the program order relation before [derive] is used. */
+  protected fun setProgramOrder(pos: List<Relation<E>>) {
+    poInClk = pos.filter { it.from.clkId == it.to.clkId }.groupBy({ it.from }, { it.to })
+    poAfterInClk.clear()
+  }
+
+  private fun E.poBeforeInClk(other: E): Boolean =
+    other in
+      poAfterInClk.getOrPut(this) {
+        val after = mutableSetOf<E>()
+        val todo = ArrayDeque(poInClk[this].orEmpty())
+        while (todo.isNotEmpty()) {
+          val e = todo.removeFirst()
+          if (after.add(e)) todo.addAll(poInClk[e].orEmpty())
+        }
+        after
+      }
+
   protected fun derive(rels: GlobalRelation, rf: Relation<E>, w: E): Reason? =
     when {
-      rf.from.clkId == rf.to.clkId -> null
-      // rf within an atomic block
-      w.clkId == rf.from.clkId || w.clkId == rf.to.clkId -> null
-      // w within an atomic block with one of the rf ends
+      w == rf.from -> null
       !rf.to.sameMemory(w) -> null
       // different memory locations (checking with rf.to due to common memory garbage event)
+
+      // Within an atomic unit, only program order decides: w overwrites rf.from before rf.to reads
+      // it (rf.to then precedes or follows the unit of both writes, and cannot see rf.from)...
+      rf.from.clkId == rf.to.clkId ->
+        if (w.clkId == rf.from.clkId && rf.from.poBeforeInClk(w) && w.poBeforeInClk(rf.to)) {
+          FromReadReason(rf, w, PoReason)
+        } else null
+      w.clkId == rf.from.clkId ->
+        if (rf.from.poBeforeInClk(w)) FromReadReason(rf, w, PoReason) else null
+      // ... or rf.to reads after w in its own unit (so w would have to precede rf.from)
+      w.clkId == rf.to.clkId ->
+        if (w.poBeforeInClk(rf.to)) WriteSerializationReason(rf, w, PoReason) else null
 
       rels[w.clkId, rf.to.clkId] != null -> { // WS derivation
         val reason = WriteSerializationReason(rf, w, rels[w.clkId, rf.to.clkId]!!)

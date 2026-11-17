@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,10 +45,10 @@ fun emergent26(
 ): STM {
   val checker = { config: XcfaConfig<*, *> -> runConfig(config, logger, uniqueLogger, true) }
 
-  var baseCegarConfig = baseCegarConfig(xcfa, mcm, parseContext, portfolioConfig, false)
-  val baseBoundedConfig = baseBoundedConfig(xcfa, mcm, parseContext, portfolioConfig, false)
-  val baseMddConfig = baseMddConfig(xcfa, mcm, parseContext, portfolioConfig, false)
-  val baseIc3Config = baseIc3Config(xcfa, mcm, parseContext, portfolioConfig, false)
+  var baseCegarConfig = baseCegarConfig(xcfa, parseContext, portfolioConfig)
+  val baseBoundedConfig = baseBoundedConfig(portfolioConfig)
+  val baseMddConfig = baseMddConfig(portfolioConfig)
+  val baseIc3Config = baseIc3Config(portfolioConfig)
 
   fun getStm(mainTrait: MainTrait, inProcess: Boolean): STM {
     val edges = LinkedHashSet<Edge>()
@@ -126,7 +126,6 @@ fun emergent26(
         baseIc3Config.copy(
           backendConfig =
             baseIc3Config.backendConfig.copy(
-              parseInProcess = true,
               timeoutMs = timeout,
               inProcess = inProcess,
               specConfig =
@@ -143,7 +142,6 @@ fun emergent26(
         baseIc3Config.copy(
           backendConfig =
             baseIc3Config.backendConfig.copy(
-              parseInProcess = true,
               timeoutMs = timeout,
               inProcess = inProcess,
               specConfig =
@@ -166,7 +164,6 @@ fun emergent26(
             baseMddConfig.backendConfig.copy(
               timeoutMs = timeout,
               inProcess = inProcess,
-              parseInProcess = true,
               specConfig = baseMddConfig.backendConfig.specConfig!!.copy(solver = solver),
             )
         ),
@@ -182,7 +179,6 @@ fun emergent26(
             baseMddConfig.backendConfig.copy(
               timeoutMs = timeout,
               inProcess = inProcess,
-              parseInProcess = true,
               specConfig =
                 baseMddConfig.backendConfig.specConfig!!.copy(cegar = true, solver = solver),
             )
@@ -192,59 +188,23 @@ fun emergent26(
     }
 
     val complex =
-      ConfigNode(
-        "Complex-$inProcess",
-        XcfaConfig(
-          inputConfig =
-            portfolioConfig.inputConfig.copy(
-              xcfaWCtx =
-                if (portfolioConfig.backendConfig.parseInProcess) null
-                else Triple(xcfa, mcm, parseContext),
-              propertyFile = null,
-              property = portfolioConfig.inputConfig.property,
-            ),
-          frontendConfig = portfolioConfig.frontendConfig,
-          backendConfig =
-            (portfolioConfig.backendConfig as BackendConfig<PortfolioConfig>).copy(
-              specConfig = PortfolioConfig("COMPLEX")
-            ),
-          outputConfig = baseCegarConfig.outputConfig,
-          debugConfig = portfolioConfig.debugConfig,
-        ),
-        checker,
-      )
+      NestedPortfolioNode("Complex-$inProcess") {
+        complex26(xcfa, mcm, parseContext, portfolioConfig, logger, uniqueLogger)
+      }
 
     val termination =
-      ConfigNode(
-        "Termination-$inProcess",
-        XcfaConfig(
-          inputConfig =
-            portfolioConfig.inputConfig.copy(
-              xcfaWCtx =
-                if (portfolioConfig.backendConfig.parseInProcess) null
-                else Triple(xcfa, mcm, parseContext),
-              propertyFile = null,
-              property = portfolioConfig.inputConfig.property,
-            ),
-          frontendConfig = portfolioConfig.frontendConfig,
-          backendConfig =
-            (portfolioConfig.backendConfig as BackendConfig<PortfolioConfig>).copy(
-              specConfig = PortfolioConfig("TERMINATION")
-            ),
-          outputConfig = baseCegarConfig.outputConfig,
-          debugConfig = portfolioConfig.debugConfig,
-        ),
-        checker,
-      )
+      NestedPortfolioNode("Termination-$inProcess") {
+        termination(xcfa, mcm, parseContext, portfolioConfig, logger, uniqueLogger)
+      }
 
     val types = xcfa.collectVars().map { it.type }.toSet()
 
-    infix fun ConfigNode.then(node: ConfigNode): ConfigNode {
+    infix fun Node.then(node: Node): Node {
       edges.add(Edge(this, node, if (inProcess) timeoutOrNotSolvableError else anyError))
       return node
     }
 
-    infix fun ConfigNode.onSolverError(node: ConfigNode): ConfigNode {
+    infix fun Node.onSolverError(node: Node): Node {
       edges.add(Edge(this, node, solverError))
       return node
     }
@@ -256,17 +216,24 @@ fun emergent26(
             // MS by default, Z3 fallback, but if ITP, use CVC instead of Z3
 
             val expl_pred_nwtMS =
-              cegar(200_000, "mathsat:5.6.12", Domain.EXPL_PRED_STMT, Refinement.NWT_IT_WP)
+              cegar(200_000, "mathsat:5.6.19", Domain.EXPL_PRED_STMT, Refinement.NWT_IT_WP)
             val expl_pred_seqMS =
-              cegar(200_000, "mathsat:5.6.12", Domain.EXPL_PRED_STMT, Refinement.SEQ_ITP)
-            val ic3CegarMS = ic3Cegar(50_000, "mathsat:5.6.12")
-            val mddCegarMS = mddCegar(50_000, "mathsat:5.6.12")
+              cegar(200_000, "mathsat:5.6.19", Domain.EXPL_PRED_STMT, Refinement.SEQ_ITP)
+            val ic3CegarMS = ic3Cegar(50_000, "mathsat:5.6.19")
+            val mddCegarMS = mddCegar(50_000, "mathsat:5.6.19")
 
             val expl_pred_nwt = cegar(200_000, "Z3", Domain.EXPL_PRED_STMT, Refinement.NWT_IT_WP)
             val expl_pred_seq =
-              cegar(200_000, "cvc5:1.2.0", Domain.EXPL_PRED_STMT, Refinement.SEQ_ITP)
-            val ic3Cegar = ic3Cegar(50_000, "cvc5:1.2.0")
-            val mddCegar = mddCegar(50_000, "cvc5:1.2.0")
+              cegar(
+                200_000,
+                portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.2.0"),
+                Domain.EXPL_PRED_STMT,
+                Refinement.SEQ_ITP,
+              )
+            val ic3Cegar =
+              ic3Cegar(50_000, portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.2.0"))
+            val mddCegar =
+              mddCegar(50_000, portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.2.0"))
 
             expl_pred_nwtMS then expl_pred_seqMS then ic3CegarMS then mddCegarMS
 
@@ -283,11 +250,22 @@ fun emergent26(
             // CVC by default, Z3 fallback
 
             val expl_pred_nwtCVC =
-              cegar(200_000, "cvc5:1.2.0", Domain.EXPL_PRED_STMT, Refinement.NWT_IT_WP)
+              cegar(
+                200_000,
+                portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.2.0"),
+                Domain.EXPL_PRED_STMT,
+                Refinement.NWT_IT_WP,
+              )
             val expl_pred_seqCVC =
-              cegar(200_000, "cvc5:1.2.0", Domain.EXPL_PRED_STMT, Refinement.SEQ_ITP)
-            val ic3CVC = ic3(50_000, "cvc5:1.2.0")
-            val ic3CegarCVC = ic3Cegar(50_000, "cvc5:1.2.0")
+              cegar(
+                200_000,
+                portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.2.0"),
+                Domain.EXPL_PRED_STMT,
+                Refinement.SEQ_ITP,
+              )
+            val ic3CVC = ic3(50_000, portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.2.0"))
+            val ic3CegarCVC =
+              ic3Cegar(50_000, portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.2.0"))
 
             val expl_pred_nwt = cegar(200_000, "Z3", Domain.EXPL_PRED_STMT, Refinement.NWT_IT_WP)
             val expl_pred_seq = cegar(200_000, "Z3", Domain.EXPL_PRED_STMT, Refinement.SEQ_ITP)
@@ -311,11 +289,11 @@ fun emergent26(
             // MS by default, Z3 fallback
 
             val expl_pred_nwtMS =
-              cegar(200_000, "mathsat:5.6.12", Domain.EXPL_PRED_STMT, Refinement.NWT_IT_WP)
+              cegar(200_000, "mathsat:5.6.19", Domain.EXPL_PRED_STMT, Refinement.NWT_IT_WP)
             val expl_pred_seqMS =
-              cegar(200_000, "mathsat:5.6.12", Domain.EXPL_PRED_STMT, Refinement.SEQ_ITP)
-            val ic3CegarMS = ic3Cegar(100_000, "mathsat:5.6.12")
-            val mddCegarMS = mddCegar(50_000, "mathsat:5.6.12")
+              cegar(200_000, "mathsat:5.6.19", Domain.EXPL_PRED_STMT, Refinement.SEQ_ITP)
+            val ic3CegarMS = ic3Cegar(100_000, "mathsat:5.6.19")
+            val mddCegarMS = mddCegar(50_000, "mathsat:5.6.19")
 
             val expl_pred_nwt = cegar(200_000, "Z3", Domain.EXPL_PRED_STMT, Refinement.NWT_IT_WP)
             val expl_pred_seq = cegar(200_000, "Z3", Domain.EXPL_PRED_STMT, Refinement.SEQ_ITP)
@@ -342,11 +320,11 @@ fun emergent26(
             val mddCegar = mddCegar(50_000, "Z3")
 
             val expl_pred_nwtMS =
-              cegar(200_000, "mathsat:5.6.12", Domain.EXPL_PRED_STMT, Refinement.NWT_IT_WP)
+              cegar(200_000, "mathsat:5.6.19", Domain.EXPL_PRED_STMT, Refinement.NWT_IT_WP)
             val expl_pred_seqMS =
-              cegar(200_000, "mathsat:5.6.12", Domain.EXPL_PRED_STMT, Refinement.SEQ_ITP)
-            val ic3CegarMS = ic3Cegar(100_000, "mathsat:5.6.12")
-            val mddCegarMS = mddCegar(50_000, "mathsat:5.6.12")
+              cegar(200_000, "mathsat:5.6.19", Domain.EXPL_PRED_STMT, Refinement.SEQ_ITP)
+            val ic3CegarMS = ic3Cegar(100_000, "mathsat:5.6.19")
+            val mddCegarMS = mddCegar(50_000, "mathsat:5.6.19")
 
             expl_pred_nwt then expl_pred_seq then ic3Cegar then mddCegar
 
@@ -365,10 +343,10 @@ fun emergent26(
             val bmc = bmc(150_000, "Z3:new")
             val expl_pred_seq = cegar(150_000, "Z3", Domain.EXPL_PRED_STMT, Refinement.SEQ_ITP)
 
-            val mddMS = mdd(600_000, "mathsat:5.6.12")
-            val bmcMS = bmc(150_000, "mathsat:5.6.12")
+            val mddMS = mdd(600_000, "mathsat:5.6.19")
+            val bmcMS = bmc(150_000, "mathsat:5.6.19")
             val expl_pred_seqMS =
-              cegar(150_000, "mathsat:5.6.12", Domain.EXPL_PRED_STMT, Refinement.SEQ_ITP)
+              cegar(150_000, "mathsat:5.6.19", Domain.EXPL_PRED_STMT, Refinement.SEQ_ITP)
 
             mdd then bmc then expl_pred_seq
 
@@ -388,9 +366,9 @@ fun emergent26(
         val expl_pred_nwt = cegar(150_000, "Z3", Domain.EXPL_PRED_STMT, Refinement.NWT_IT_WP)
         val expl_pred_seq = cegar(150_000, "Z3", Domain.EXPL_PRED_STMT, Refinement.SEQ_ITP)
         val expl_pred_nwtMS =
-          cegar(150_000, "mathsat:5.6.12", Domain.EXPL_PRED_STMT, Refinement.NWT_IT_WP)
+          cegar(150_000, "mathsat:5.6.19", Domain.EXPL_PRED_STMT, Refinement.NWT_IT_WP)
         val expl_pred_seqMS =
-          cegar(150_000, "mathsat:5.6.12", Domain.EXPL_PRED_STMT, Refinement.SEQ_ITP)
+          cegar(150_000, "mathsat:5.6.19", Domain.EXPL_PRED_STMT, Refinement.SEQ_ITP)
 
         expl_pred_nwtMS then expl_pred_seqMS
 

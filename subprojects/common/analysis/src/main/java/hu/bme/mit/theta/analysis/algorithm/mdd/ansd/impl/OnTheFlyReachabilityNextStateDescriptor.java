@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -18,13 +18,20 @@ package hu.bme.mit.theta.analysis.algorithm.mdd.ansd.impl;
 import com.google.common.base.Preconditions;
 import hu.bme.mit.delta.collections.IntObjMapView;
 import hu.bme.mit.delta.collections.impl.IntObjMapViews;
+import hu.bme.mit.delta.java.mdd.MddGraph;
 import hu.bme.mit.delta.java.mdd.MddHandle;
+import hu.bme.mit.delta.java.mdd.MddNode;
 import hu.bme.mit.theta.analysis.algorithm.mdd.ansd.AbstractNextStateDescriptor;
 import hu.bme.mit.theta.analysis.algorithm.mdd.ansd.StateSpaceInfo;
+import hu.bme.mit.theta.analysis.algorithm.mdd.node.expression.MddValues;
 import java.util.ArrayList;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * The wrapped relation with early termination: once an image state lies under {@code target}, a
+ * shared kill switch empties every image. Sound only for deciding reachability of {@code target}.
+ */
 public class OnTheFlyReachabilityNextStateDescriptor implements AbstractNextStateDescriptor {
 
     private final AbstractNextStateDescriptor wrapped;
@@ -68,9 +75,11 @@ public class OnTheFlyReachabilityNextStateDescriptor implements AbstractNextStat
         this.wrapped = wrapped;
         this.target = Preconditions.checkNotNull(target);
         this.killSwitch = killSwitch;
-        if (target.isTerminal() && !target.isTerminalZero()) {
-            System.out.println("Stopping state space enumeration, violating state reached.");
-            killSwitch.setKilled(true);
+        // where steps act on terminals, the image terminal decides, see transformTerminal
+        if (target.isTerminal()
+                && !target.isTerminalZero()
+                && !MddValues.of(target.getVariableHandle().getMddGraph()).actsOnTerminals()) {
+            stop();
         }
     }
 
@@ -134,5 +143,24 @@ public class OnTheFlyReachabilityNextStateDescriptor implements AbstractNextStat
     @Override
     public boolean evaluate() {
         return wrapped.evaluate();
+    }
+
+    private void stop() {
+        System.out.println("Stopping state space enumeration, violating state reached.");
+        killSwitch.setKilled(true);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public MddNode transformTerminal(MddNode terminal, MddGraph<?> graph) {
+        final MddNode image = wrapped.transformTerminal(terminal, graph);
+        if (MddValues.of(graph).actsOnTerminals()
+                && target.isTerminal()
+                && !target.isTerminalZero()
+                && ((MddGraph<Object>) graph).intersectionTerminal(image, target.getNode())
+                        != graph.getTerminalZeroNode()) {
+            stop();
+        }
+        return image;
     }
 }

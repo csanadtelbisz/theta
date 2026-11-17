@@ -51,6 +51,8 @@ import org.junit.jupiter.params.provider.MethodSource
 
 class XcfaExplAnalysisTest {
 
+  private val parseContext = ParseContext()
+
   companion object {
 
     private val seed = 1001
@@ -93,9 +95,9 @@ class XcfaExplAnalysisTest {
         false,
       )
 
-    val lts = getXcfaLts()
+    val lts = getXcfaLts(Random(seed))
 
-    val errorDetector = getXcfaErrorDetector(property.verifiedProperty)
+    val errorDetector = getXcfaErrorDetector(property.verifiedProperty, parseContext)
     val abstractor =
       getXcfaAbstractor(
         analysis,
@@ -150,9 +152,9 @@ class XcfaExplAnalysisTest {
         false,
       )
 
-    val lts = XcfaSporLts(xcfa)
+    val lts = XcfaSporLts(xcfa, Random(seed))
 
-    val errorDetector = getXcfaErrorDetector(property.verifiedProperty)
+    val errorDetector = getXcfaErrorDetector(property.verifiedProperty, parseContext)
     val abstractor =
       getXcfaAbstractor(
         analysis,
@@ -208,9 +210,9 @@ class XcfaExplAnalysisTest {
         false,
       )
 
-    val lts = XcfaSporLts(xcfa)
+    val lts = XcfaSporLts(xcfa, Random(seed))
 
-    val errorDetector = getXcfaErrorDetector(assertionProperty.verifiedProperty)
+    val errorDetector = getXcfaErrorDetector(assertionProperty.verifiedProperty, parseContext)
     val abstractor =
       getXcfaAbstractor(
         analysis,
@@ -251,7 +253,6 @@ class XcfaExplAnalysisTest {
   @ParameterizedTest
   @MethodSource("data")
   fun testDporExpl(filepath: String, verdict: (SafetyResult<*, *>) -> Boolean) {
-    XcfaDporLts.random = Random(seed)
     println("Testing DPOR on $filepath...")
     val stream = javaClass.getResourceAsStream(filepath)
     val xcfa =
@@ -266,9 +267,9 @@ class XcfaExplAnalysisTest {
         false,
       )
 
-    val lts = XcfaDporLts(xcfa)
+    val lts = XcfaDporLts(xcfa, Random(seed))
 
-    val errorDetector = getXcfaErrorDetector(property.verifiedProperty)
+    val errorDetector = getXcfaErrorDetector(property.verifiedProperty, parseContext)
     val abstractor =
       getXcfaAbstractor(
         analysis,
@@ -321,9 +322,9 @@ class XcfaExplAnalysisTest {
         false,
       )
 
-    val lts = XcfaAasporLts(xcfa, mutableMapOf())
+    val lts = XcfaAasporLts(xcfa, mutableMapOf(), Random(seed))
 
-    val errorDetector = getXcfaErrorDetector(property.verifiedProperty)
+    val errorDetector = getXcfaErrorDetector(property.verifiedProperty, parseContext)
     val abstractor =
       getXcfaAbstractor(
         analysis,
@@ -368,7 +369,6 @@ class XcfaExplAnalysisTest {
   }
 
   fun testAadporExpl(filepath: String, verdict: (SafetyResult<*, *>) -> Boolean) {
-    XcfaDporLts.random = Random(seed)
     println("Testing AADPOR on $filepath...")
     val stream = javaClass.getResourceAsStream(filepath)
     val xcfa =
@@ -383,9 +383,9 @@ class XcfaExplAnalysisTest {
         false,
       )
 
-    val lts = XcfaAadporLts(xcfa)
+    val lts = XcfaAadporLts(xcfa, Random(seed))
 
-    val errorDetector = getXcfaErrorDetector(property.verifiedProperty)
+    val errorDetector = getXcfaErrorDetector(property.verifiedProperty, parseContext)
     val abstractor =
       getXcfaAbstractor(
         analysis,

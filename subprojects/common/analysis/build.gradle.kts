@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ dependencies {
     implementation(project(":theta-solver"))
     implementation(Deps.javasmt)
     implementation(project(":theta-solver-javasmt"))
-    implementation(project(":theta-solver-z3-legacy"))
     implementation(project(":theta-graph-solver"))
     implementation(Deps.refineryGeneratorDev)
     implementation(Deps.refineryLanguageSemanticsDev)
@@ -36,7 +35,6 @@ dependencies {
     implementation(Deps.refineryStoreTransitionSystemDev)
     implementation(Deps.refineryQueryInterpreterDev)
     implementation(Deps.refineryVisualizationDev)
-    implementation(project(mapOf("path" to ":theta-solver-z3-legacy")))
     testImplementation(project(":theta-solver-z3-legacy"))
     testImplementation(project(":theta-solver-z3"))
     testImplementation(project(":theta-grammar"))

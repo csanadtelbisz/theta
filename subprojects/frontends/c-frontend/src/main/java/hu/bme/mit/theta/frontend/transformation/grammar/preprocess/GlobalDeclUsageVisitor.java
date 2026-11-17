@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import hu.bme.mit.theta.frontend.transformation.grammar.IncludeHandlingCBaseVisi
 import hu.bme.mit.theta.frontend.transformation.grammar.type.DeclarationVisitor;
 import hu.bme.mit.theta.frontend.transformation.model.declaration.CDeclaration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -35,6 +36,9 @@ import java.util.stream.Collectors;
 public class GlobalDeclUsageVisitor extends IncludeHandlingCBaseVisitor<List<CDeclaration>> {
     private final DeclarationVisitor declarationVisitor;
 
+    /** The globals declared with an initializer so far. */
+    private final Map<String, GlobalDeclarationLevel> initializedGlobals = new HashMap<>();
+
     public GlobalDeclUsageVisitor(DeclarationVisitor declarationVisitor) {
         this.declarationVisitor = declarationVisitor;
     }
@@ -42,6 +46,7 @@ public class GlobalDeclUsageVisitor extends IncludeHandlingCBaseVisitor<List<CDe
     public void clear() {
         globalUsages.clear();
         usedContexts.clear();
+        initializedGlobals.clear();
         current = null;
     }
 
@@ -57,8 +62,39 @@ public class GlobalDeclUsageVisitor extends IncludeHandlingCBaseVisitor<List<CDe
                         ctx.declaration().declarationSpecifiers(),
                         ctx.declaration().initDeclaratorList(),
                         false);
+        Map<CDeclaration, GlobalDeclarationLevel> declarationLevel =
+                withDeclarationLevel(ctx, declarations);
         for (CDeclaration declaration : declarations) {
             if (!declaration.getType().isTypedef()) {
+                // The declaration with an initializer is the definition, whatever the order: a
+                // later one without (`int x = 5; extern int x;`) must not take its place.
+                // If the variable has at least one tentative definition (non-extern declaration),
+                // then that shall define its value. Otherwise, its value is undefined.
+                if (initializedGlobals.containsKey(declaration.getName())
+                        && declarationLevel
+                                        .get(declaration)
+                                        .compareTo(initializedGlobals.get(declaration.getName()))
+                                <= 0) continue;
+
+                initializedGlobals.put(declaration.getName(), declarationLevel.get(declaration));
+                // A bare prototype repeating a function that was already *defined* above must not
+                // replace it: the definition carries the body, the prototype does not. Preprocessed
+                // sources hit this routinely, where a header re-declares a `static inline` function
+                // it has already defined. Overwriting would silently turn the function into an
+                // undefined one (havoc'd return value, so false alarms) and would also drop the
+                // identifiers its body uses, pruning everything only it called. Overwriting stays
+                // correct for redeclared globals -- a tentative definition followed by the real
+                // initializer -- which is what this branch was written for.
+                if (usedContexts.stream()
+                        .anyMatch(
+                                c ->
+                                        Objects.equals(c.get1(), declaration.getName())
+                                                && c.get2()
+                                                        instanceof
+                                                        CParser
+                                                                .ExternalFunctionDefinitionContext)) {
+                    continue;
+                }
                 globalUsages.remove(declaration.getName());
                 globalUsages.put(declaration.getName(), new LinkedHashSet<>());
                 if (usedContexts.stream()
@@ -77,6 +113,26 @@ public class GlobalDeclUsageVisitor extends IncludeHandlingCBaseVisitor<List<CDe
             }
         }
         return null;
+    }
+
+    private Map<CDeclaration, GlobalDeclarationLevel> withDeclarationLevel(
+            CParser.GlobalDeclarationContext ctx, List<CDeclaration> declarations) {
+        CParser.InitDeclaratorListContext list = ctx.declaration().initDeclaratorList();
+        List<CParser.InitDeclaratorContext> initDeclarators =
+                list == null ? List.of() : list.initDeclarator();
+        int first = declarations.size() - initDeclarators.size();
+        Map<CDeclaration, GlobalDeclarationLevel> ret = new LinkedHashMap<>();
+        for (int i = 0; i < declarations.size(); i++) {
+            CDeclaration declaration = declarations.get(i);
+            if (i >= first && initDeclarators.get(i - first).initializer() != null) {
+                ret.put(declaration, GlobalDeclarationLevel.DEFINED);
+            } else if (!declaration.getType().isExtern()) {
+                ret.put(declaration, GlobalDeclarationLevel.DECLARED);
+            } else {
+                ret.put(declaration, GlobalDeclarationLevel.EXTERN);
+            }
+        }
+        return ret;
     }
 
     @Override
@@ -105,6 +161,8 @@ public class GlobalDeclUsageVisitor extends IncludeHandlingCBaseVisitor<List<CDe
                 externalDeclarationContext.accept(this);
             } catch (Throwable e) {
                 // we don't do anything, we'll throw an error later if something's missing
+                // Important: When looking for the source of frontend issues, break on this catch:
+                // failures here are tolerated on purpose, so they are otherwise invisible.
             }
         }
         return null;
@@ -114,6 +172,7 @@ public class GlobalDeclUsageVisitor extends IncludeHandlingCBaseVisitor<List<CDe
             CParser.CompilationUnitContext ctx) {
         globalUsages.clear();
         usedContexts.clear();
+        initializedGlobals.clear();
         ctx.translationUnit().accept(this);
         checkState(globalUsages.containsKey("main"), "Main function not found!");
         Set<String> ret = new LinkedHashSet<>();
@@ -135,5 +194,11 @@ public class GlobalDeclUsageVisitor extends IncludeHandlingCBaseVisitor<List<CDe
                 .map(Tuple2::get2)
                 .distinct()
                 .collect(Collectors.toList());
+    }
+
+    private enum GlobalDeclarationLevel {
+        EXTERN,
+        DECLARED,
+        DEFINED,
     }
 }

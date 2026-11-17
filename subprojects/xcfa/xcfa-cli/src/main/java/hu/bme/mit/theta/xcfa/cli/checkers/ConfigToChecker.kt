@@ -30,6 +30,25 @@ import hu.bme.mit.theta.xcfa.analysis.XcfaState
 import hu.bme.mit.theta.xcfa.cli.params.Backend
 import hu.bme.mit.theta.xcfa.cli.params.XcfaConfig
 import hu.bme.mit.theta.xcfa.model.XCFA
+import hu.bme.mit.theta.xcfa.witnesses.hasInvariantChecks
+import kotlin.random.Random
+
+/**
+ * Seeds the order in which the LTSs offer enabled actions. That order steers the exploration, so
+ * unseeded, identical runs can take very different times.
+ */
+internal fun explorationRandom() = Random(-1)
+
+private val invariantCheckingBackends =
+  setOf(
+    Backend.BMC,
+    Backend.KIND,
+    Backend.IMC,
+    Backend.KINDIMC,
+    Backend.BOUNDED,
+    Backend.PORTFOLIO,
+    Backend.NONE,
+  )
 
 fun getSafetyChecker(
   xcfa: XCFA?,
@@ -40,11 +59,15 @@ fun getSafetyChecker(
   uniqueLogger: Logger,
 ): SafetyChecker<*, *, *> =
   if (config.backendConfig.inProcess) {
-    InProcessChecker(xcfa, config, parseContext, logger)
+    InProcessChecker(config, logger)
   } else {
     xcfa!!
     mcm!!
     parseContext!!
+    // The bounded backends check them in their liveness-to-safety reduction
+    check(!xcfa.hasInvariantChecks || config.backendConfig.backend in invariantCheckingBackends) {
+      "Backend ${config.backendConfig.backend} cannot validate a termination witness"
+    }
     when (config.backendConfig.backend) {
       Backend.CEGAR -> getCegarChecker(xcfa, mcm, parseContext, config, logger)
       Backend.BMC,
@@ -53,12 +76,13 @@ fun getSafetyChecker(
       Backend.KINDIMC,
       Backend.BOUNDED -> getBoundedChecker(xcfa, parseContext, config, logger)
       Backend.PATH_ENUMERATION -> getPathEnumerationChecker(xcfa, parseContext, config, logger)
-      Backend.OC -> getOcChecker(xcfa, mcm, config, logger)
+      Backend.OC -> getOcChecker(xcfa, parseContext, config, logger)
       Backend.LAZY -> TODO()
       Backend.PORTFOLIO ->
         getPortfolioChecker(xcfa, mcm, config, parseContext, logger, uniqueLogger)
       Backend.MDD -> getMddChecker(xcfa, parseContext, config, logger)
       Backend.REFINERY -> getRefineryChecker(xcfa, parseContext, config, logger)
+      Backend.MDD_CEGAR -> getMddCegarChecker(xcfa, parseContext, config, logger)
       Backend.NONE ->
         SafetyChecker<
           ARG<XcfaState<PtrState<*>>, XcfaAction>,
@@ -70,6 +94,7 @@ fun getSafetyChecker(
       Backend.CHC -> getHornChecker(xcfa, mcm, config, logger, parseContext)
       Backend.IC3 -> getIc3Checker(xcfa, parseContext, config, logger)
       Backend.LIVENESS_CEGAR -> getAsgCegarChecker(xcfa, parseContext, mcm, config, logger)
+      Backend.DSS -> getDssChecker(xcfa, mcm, config, parseContext, logger)
       Backend.TRACEGEN ->
         throw RuntimeException(
           "Trace generation is NOT safety analysis, can not return safety checker for trace generation"
@@ -86,7 +111,7 @@ fun getChecker(
   uniqueLogger: Logger,
 ): Checker<*, XcfaPrec<*>> =
   if (config.backendConfig.inProcess) {
-    InProcessChecker(xcfa, config, parseContext, logger)
+    InProcessChecker(config, logger)
   } else {
     when (config.backendConfig.backend) {
       Backend.TRACEGEN -> getTracegenChecker(xcfa!!, parseContext!!, mcm, config, logger)

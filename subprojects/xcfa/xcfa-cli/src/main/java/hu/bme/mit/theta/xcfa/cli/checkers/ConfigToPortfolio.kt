@@ -15,19 +15,21 @@
  */
 package hu.bme.mit.theta.xcfa.cli.checkers
 
-import com.google.common.base.Stopwatch
 import hu.bme.mit.theta.analysis.Trace
 import hu.bme.mit.theta.analysis.algorithm.SafetyChecker
 import hu.bme.mit.theta.analysis.algorithm.SafetyResult
 import hu.bme.mit.theta.analysis.algorithm.arg.ARG
 import hu.bme.mit.theta.analysis.ptr.PtrState
 import hu.bme.mit.theta.common.logging.Logger
+import hu.bme.mit.theta.common.stopwatch.Stopwatch
 import hu.bme.mit.theta.frontend.ParseContext
 import hu.bme.mit.theta.graphsolver.patterns.constraints.MCM
 import hu.bme.mit.theta.xcfa.analysis.XcfaAction
 import hu.bme.mit.theta.xcfa.analysis.XcfaPrec
 import hu.bme.mit.theta.xcfa.analysis.XcfaState
 import hu.bme.mit.theta.xcfa.cli.params.CHCFrontendConfig
+import hu.bme.mit.theta.xcfa.cli.params.ErrorCodeException
+import hu.bme.mit.theta.xcfa.cli.params.ExitCodes
 import hu.bme.mit.theta.xcfa.cli.params.InputType
 import hu.bme.mit.theta.xcfa.cli.params.PortfolioConfig
 import hu.bme.mit.theta.xcfa.cli.params.XcfaConfig
@@ -35,7 +37,6 @@ import hu.bme.mit.theta.xcfa.cli.portfolio.*
 import hu.bme.mit.theta.xcfa.model.XCFA
 import java.io.File
 import java.io.FileReader
-import java.util.concurrent.TimeUnit
 import javax.script.Bindings
 import javax.script.ScriptEngine
 import javax.script.ScriptEngineManager
@@ -62,10 +63,11 @@ fun getPortfolioChecker(
 
   val portfolioStm =
     when (portfolioName) {
+      "COMPLEX",
       "STABLE",
-      "COMPLEX" -> complex26(xcfa, mcm, parseContext, config, logger, uniqueLogger)
+      "COMPLEX27" -> complex27(xcfa, mcm, parseContext, config, logger, uniqueLogger)
 
-      "EMERGENT" -> emergent26(xcfa, mcm, parseContext, config, logger, uniqueLogger)
+      "EMERGENT" -> emergent27(xcfa, mcm, parseContext, config, logger, uniqueLogger)
 
       "CHC-COMP-25" ->
         if (!chcModels) chcCompPortfolio25(xcfa, mcm, parseContext, config, logger, uniqueLogger)
@@ -81,6 +83,8 @@ fun getPortfolioChecker(
       "TERMINATION" -> termination(xcfa, mcm, parseContext, config, logger, uniqueLogger)
 
       "MULTITHREAD" -> multithreadPortfolio(xcfa, mcm, parseContext, config, logger, uniqueLogger)
+
+      "SYMBOLIC" -> symbolicPortfolio(xcfa, mcm, parseContext, config, logger, uniqueLogger)
 
       else -> {
         if (File(portfolioName).exists()) {
@@ -100,9 +104,21 @@ fun getPortfolioChecker(
     }
 
   val result =
-    portfolioStm.execute(logger) as Pair<Pair<String, XcfaConfig<*, *>>, SafetyResult<*, *>>
+    try {
+      portfolioStm.execute(logger) as Pair<Pair<String, XcfaConfig<*, *>>, SafetyResult<*, *>>
+    } catch (e: ErrorCodeException) {
+      if (e.code != ExitCodes.UNRELIABLE_UNSAFE.code) throw e
+      val unknown =
+        SafetyResult.unknown<
+          ARG<XcfaState<PtrState<*>>, XcfaAction>,
+          Trace<XcfaState<PtrState<*>>, XcfaAction>,
+        >()
+      logger.result("No config gave a reliable verdict")
+      logger.result("%s", unknown.toString())
+      return@SafetyChecker unknown
+    }
 
-  logger.result("Config ${result.first.first} succeeded in ${sw.elapsed(TimeUnit.MILLISECONDS)} ms")
+  logger.result("Config ${result.first.first} succeeded in ${sw.elapsedMillis()} ms")
   logger.benchmark("success-result: ${result.first.first}\n")
   result.second
     as

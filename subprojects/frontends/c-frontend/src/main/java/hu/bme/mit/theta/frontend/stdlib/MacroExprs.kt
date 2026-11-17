@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -19,13 +19,48 @@ import hu.bme.mit.theta.core.type.Expr
 import hu.bme.mit.theta.frontend.ParseContext
 import hu.bme.mit.theta.frontend.transformation.grammar.expression.UnsupportedInitializer
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.CComplexType
+import java.math.BigInteger
+
+/**
+ * The largest value of a signed C type, from the width the architecture actually gives it.
+ *
+ * These limits used to be written out as literals -- and as the C standard's *minimum guaranteed*
+ * magnitudes at that, i.e. the 16-bit ones: `INT_MAX` was 32767 on an architecture whose `int` is
+ * 32 bits wide. Code that guards an increment with `if (i == INT_MAX) return;` was then compared
+ * against the wrong constant, leaving the real overflow reachable and the task reported unsafe.
+ */
+private fun signedMax(t: CComplexType): String =
+  BigInteger.TWO.pow(t.width() - 1).subtract(BigInteger.ONE).toString()
+
+/** The most negative value of a signed C type: two's complement reaches one further down. */
+private fun signedMin(t: CComplexType): String =
+  BigInteger.TWO.pow(t.width() - 1).negate().toString()
+
+/** The largest value of an unsigned C type. */
+private fun unsignedMax(t: CComplexType): String =
+  BigInteger.TWO.pow(t.width()).subtract(BigInteger.ONE).toString()
 
 enum class MacroExprs(val id: String, val value: (ParseContext) -> Expr<*>) {
 
   PTHREAD_MUTEX_INITIALIZER("PTHREAD_MUTEX_INITIALIZER", { UnsupportedInitializer() }),
-  PTHREAD_MUTEX_ERRORCHECK("PTHREAD_MUTEX_ERRORCHECK", { UnsupportedInitializer() }),
   PTHREAD_RWLOCK_INITIALIZER("PTHREAD_RWLOCK_INITIALIZER", { UnsupportedInitializer() }),
+  PTHREAD_COND_INITIALIZER("PTHREAD_COND_INITIALIZER", { UnsupportedInitializer() }),
+  PTHREAD_ONCE_INIT("PTHREAD_ONCE_INIT", { CComplexType.getSignedInt(it).nullValue }),
   NULL("NULL", { CComplexType.getSignedInt(it).nullValue }),
+  NULLPTR("nullptr", { CComplexType.getSignedInt(it).nullValue }),
+
+  // <stdatomic.h> memory orders. They constrain what may be *reordered* around an access; the
+  // analysis is sequentially consistent, so their values are never inspected -- only their names
+  // have to resolve. The numbering is the one every compiler uses.
+  MEMORY_ORDER_RELAXED("memory_order_relaxed", { CComplexType.getSignedInt(it).getValue("0") }),
+  MEMORY_ORDER_CONSUME("memory_order_consume", { CComplexType.getSignedInt(it).getValue("1") }),
+  MEMORY_ORDER_ACQUIRE("memory_order_acquire", { CComplexType.getSignedInt(it).getValue("2") }),
+  MEMORY_ORDER_RELEASE("memory_order_release", { CComplexType.getSignedInt(it).getValue("3") }),
+  MEMORY_ORDER_ACQ_REL("memory_order_acq_rel", { CComplexType.getSignedInt(it).getValue("4") }),
+  MEMORY_ORDER_SEQ_CST("memory_order_seq_cst", { CComplexType.getSignedInt(it).getValue("5") }),
+  // The GCC predefined spelling of the same order, used with the `__atomic_*` builtins.
+  ATOMIC_SEQ_CST("__ATOMIC_SEQ_CST", { CComplexType.getSignedInt(it).getValue("5") }),
+  ATOMIC_FLAG_INIT("ATOMIC_FLAG_INIT", { CComplexType.getSignedInt(it).nullValue }),
 
   // Integer characteristics
   CHAR_BIT("CHAR_BIT", { CComplexType.getSignedInt(it).getValue("8") }),
@@ -34,7 +69,7 @@ enum class MacroExprs(val id: String, val value: (ParseContext) -> Expr<*>) {
 
   // Floating-point — double
   DBL_DIG("DBL_DIG", { CComplexType.getSignedInt(it).getValue("15") }),
-  DBL_EPSILON("DBL_EPSILON", { CComplexType.getDouble(it).getValue("1.1102230246251568e-16") }),
+  DBL_EPSILON("DBL_EPSILON", { CComplexType.getDouble(it).getValue("2.220446049250313e-16") }),
   DBL_MANT_DIG("DBL_MANT_DIG", { CComplexType.getSignedInt(it).getValue("53") }),
   DBL_MAX("DBL_MAX", { CComplexType.getDouble(it).getValue("1.7976931348623157e+308") }),
   DBL_MAX_10_EXP("DBL_MAX_10_EXP", { CComplexType.getSignedInt(it).getValue("308") }),
@@ -48,13 +83,13 @@ enum class MacroExprs(val id: String, val value: (ParseContext) -> Expr<*>) {
 
   // Floating-point — float
   FLT_DIG("FLT_DIG", { CComplexType.getSignedInt(it).getValue("6") }),
-  FLT_EPSILON("FLT_EPSILON", { CComplexType.getFloat(it).getValue("1.19209290e-07F") }),
+  FLT_EPSILON("FLT_EPSILON", { CComplexType.getFloat(it).getValue("1.19209290e-07") }),
   FLT_GUARD("FLT_GUARD", { CComplexType.getSignedInt(it).getValue("1") }),
   FLT_MANT_DIG("FLT_MANT_DIG", { CComplexType.getSignedInt(it).getValue("24") }),
-  FLT_MAX("FLT_MAX", { CComplexType.getFloat(it).getValue("3.40282347e+38F") }),
+  FLT_MAX("FLT_MAX", { CComplexType.getFloat(it).getValue("3.40282347e+38") }),
   FLT_MAX_10_EXP("FLT_MAX_10_EXP", { CComplexType.getSignedInt(it).getValue("38") }),
   FLT_MAX_EXP("FLT_MAX_EXP", { CComplexType.getSignedInt(it).getValue("128") }),
-  FLT_MIN("FLT_MIN", { CComplexType.getFloat(it).getValue("1.17549435e-38F") }),
+  FLT_MIN("FLT_MIN", { CComplexType.getFloat(it).getValue("1.17549435e-38") }),
   FLT_MIN_10_EXP("FLT_MIN_10_EXP", { CComplexType.getSignedInt(it).getValue("-37") }),
   FLT_MIN_EXP("FLT_MIN_EXP", { CComplexType.getSignedInt(it).getValue("-125") }),
   FLT_NORMALIZE("FLT_NORMALIZE", { CComplexType.getSignedInt(it).getValue("1") }),
@@ -62,12 +97,18 @@ enum class MacroExprs(val id: String, val value: (ParseContext) -> Expr<*>) {
   FLT_ROUNDS("FLT_ROUNDS", { CComplexType.getSignedInt(it).getValue("1") }),
 
   // int, long, long long limits
-  INT_MAX("INT_MAX", { CComplexType.getSignedInt(it).getValue("32767") }),
-  INT_MIN("INT_MIN", { CComplexType.getSignedInt(it).getValue("-32767") }),
-  LONG_MAX("LONG_MAX", { CComplexType.getSignedLong(it).getValue("2147483647") }),
-  LONG_MIN("LONG_MIN", { CComplexType.getSignedLong(it).getValue("-2147483647") }),
-  LLONG_MAX("LLONG_MAX", { CComplexType.getSignedLongLong(it).getValue("9223372036854775807") }),
-  LLONG_MIN("LLONG_MIN", { CComplexType.getSignedLongLong(it).getValue("-9223372036854775807") }),
+  INT_MAX("INT_MAX", { CComplexType.getSignedInt(it).let { t -> t.getValue(signedMax(t)) } }),
+  INT_MIN("INT_MIN", { CComplexType.getSignedInt(it).let { t -> t.getValue(signedMin(t)) } }),
+  LONG_MAX("LONG_MAX", { CComplexType.getSignedLong(it).let { t -> t.getValue(signedMax(t)) } }),
+  LONG_MIN("LONG_MIN", { CComplexType.getSignedLong(it).let { t -> t.getValue(signedMin(t)) } }),
+  LLONG_MAX(
+    "LLONG_MAX",
+    { CComplexType.getSignedLongLong(it).let { t -> t.getValue(signedMax(t)) } },
+  ),
+  LLONG_MIN(
+    "LLONG_MIN",
+    { CComplexType.getSignedLongLong(it).let { t -> t.getValue(signedMin(t)) } },
+  ),
 
   // long double
   LDBL_DIG("LDBL_DIG", { CComplexType.getSignedInt(it).getValue("15") }),
@@ -109,19 +150,196 @@ enum class MacroExprs(val id: String, val value: (ParseContext) -> Expr<*>) {
   PRIxPTR("PRIxPTR", { CComplexType.getSignedInt(it).getValue("\"x\"") }),
 
   // signed and unsigned char / short / int
-  SCHAR_MAX("SCHAR_MAX", { CComplexType.getSignedInt(it).getValue("127") }),
-  SCHAR_MIN("SCHAR_MIN", { CComplexType.getSignedInt(it).getValue("-127") }),
-  SHRT_MAX("SHRT_MAX", { CComplexType.getSignedInt(it).getValue("32767") }),
-  SHRT_MIN("SHRT_MIN", { CComplexType.getSignedInt(it).getValue("-32767") }),
-  UCHAR_MAX("UCHAR_MAX", { CComplexType.getUnsignedInt(it).getValue("255") }),
-  UINT_MAX("UINT_MAX", { CComplexType.getUnsignedInt(it).getValue("65535") }),
+  SCHAR_MAX(
+    "SCHAR_MAX",
+    { CComplexType.getSignedInt(it).getValue(signedMax(CComplexType.getType("signedchar", it))) },
+  ),
+  SCHAR_MIN(
+    "SCHAR_MIN",
+    { CComplexType.getSignedInt(it).getValue(signedMin(CComplexType.getType("signedchar", it))) },
+  ),
+  SHRT_MAX(
+    "SHRT_MAX",
+    { CComplexType.getSignedInt(it).getValue(signedMax(CComplexType.getType("signedshort", it))) },
+  ),
+  SHRT_MIN(
+    "SHRT_MIN",
+    { CComplexType.getSignedInt(it).getValue(signedMin(CComplexType.getType("signedshort", it))) },
+  ),
+  UCHAR_MAX(
+    "UCHAR_MAX",
+    {
+      CComplexType.getUnsignedInt(it)
+        .getValue(unsignedMax(CComplexType.getType("unsignedchar", it)))
+    },
+  ),
+  UINT_MAX("UINT_MAX", { CComplexType.getUnsignedInt(it).let { t -> t.getValue(unsignedMax(t)) } }),
   ULLONG_MAX(
     "ULLONG_MAX",
-    { CComplexType.getUnsignedLongLong(it).getValue("18446744073709551615") },
+    { CComplexType.getUnsignedLongLong(it).let { t -> t.getValue(unsignedMax(t)) } },
   ),
-  ULONG_MAX("ULONG_MAX", { CComplexType.getUnsignedLong(it).getValue("4294967295") }),
-  USHRT_MAX("USHRT_MAX", { CComplexType.getUnsignedInt(it).getValue("65535") }),
+  ULONG_MAX(
+    "ULONG_MAX",
+    { CComplexType.getUnsignedLong(it).let { t -> t.getValue(unsignedMax(t)) } },
+  ),
+  USHRT_MAX(
+    "USHRT_MAX",
+    {
+      CComplexType.getUnsignedInt(it)
+        .getValue(unsignedMax(CComplexType.getType("unsignedshort", it)))
+    },
+  ),
 }
+
+/**
+ * `<errno.h>` error numbers, as Linux/glibc defines them (the same on every architecture SV-COMP
+ * uses). Code compares and returns them, so the exact values matter only between each other, but
+ * they are kept faithful anyway.
+ */
+private val errnoValues: Map<String, Int> =
+  mapOf(
+      "EPERM" to 1,
+      "ENOENT" to 2,
+      "ESRCH" to 3,
+      "EINTR" to 4,
+      "EIO" to 5,
+      "ENXIO" to 6,
+      "E2BIG" to 7,
+      "ENOEXEC" to 8,
+      "EBADF" to 9,
+      "ECHILD" to 10,
+      "EAGAIN" to 11,
+      "ENOMEM" to 12,
+      "EACCES" to 13,
+      "EFAULT" to 14,
+      "ENOTBLK" to 15,
+      "EBUSY" to 16,
+      "EEXIST" to 17,
+      "EXDEV" to 18,
+      "ENODEV" to 19,
+      "ENOTDIR" to 20,
+      "EISDIR" to 21,
+      "EINVAL" to 22,
+      "ENFILE" to 23,
+      "EMFILE" to 24,
+      "ENOTTY" to 25,
+      "ETXTBSY" to 26,
+      "EFBIG" to 27,
+      "ENOSPC" to 28,
+      "ESPIPE" to 29,
+      "EROFS" to 30,
+      "EMLINK" to 31,
+      "EPIPE" to 32,
+      "EDOM" to 33,
+      "ERANGE" to 34,
+      "EDEADLK" to 35,
+      "ENAMETOOLONG" to 36,
+      "ENOLCK" to 37,
+      "ENOSYS" to 38,
+      "ENOTEMPTY" to 39,
+      "ELOOP" to 40,
+      "ENOMSG" to 42,
+      "EIDRM" to 43,
+      "ECHRNG" to 44,
+      "EL2NSYNC" to 45,
+      "EL3HLT" to 46,
+      "EL3RST" to 47,
+      "ELNRNG" to 48,
+      "EUNATCH" to 49,
+      "ENOCSI" to 50,
+      "EL2HLT" to 51,
+      "EBADE" to 52,
+      "EBADR" to 53,
+      "EXFULL" to 54,
+      "ENOANO" to 55,
+      "EBADRQC" to 56,
+      "EBADSLT" to 57,
+      "EBFONT" to 59,
+      "ENOSTR" to 60,
+      "ENODATA" to 61,
+      "ETIME" to 62,
+      "ENOSR" to 63,
+      "ENONET" to 64,
+      "ENOPKG" to 65,
+      "EREMOTE" to 66,
+      "ENOLINK" to 67,
+      "EADV" to 68,
+      "ESRMNT" to 69,
+      "ECOMM" to 70,
+      "EPROTO" to 71,
+      "EMULTIHOP" to 72,
+      "EDOTDOT" to 73,
+      "EBADMSG" to 74,
+      "EOVERFLOW" to 75,
+      "ENOTUNIQ" to 76,
+      "EBADFD" to 77,
+      "EREMCHG" to 78,
+      "ELIBACC" to 79,
+      "ELIBBAD" to 80,
+      "ELIBSCN" to 81,
+      "ELIBMAX" to 82,
+      "ELIBEXEC" to 83,
+      "EILSEQ" to 84,
+      "ERESTART" to 85,
+      "ESTRPIPE" to 86,
+      "EUSERS" to 87,
+      "ENOTSOCK" to 88,
+      "EDESTADDRREQ" to 89,
+      "EMSGSIZE" to 90,
+      "EPROTOTYPE" to 91,
+      "ENOPROTOOPT" to 92,
+      "EPROTONOSUPPORT" to 93,
+      "ESOCKTNOSUPPORT" to 94,
+      "EOPNOTSUPP" to 95,
+      "EPFNOSUPPORT" to 96,
+      "EAFNOSUPPORT" to 97,
+      "EADDRINUSE" to 98,
+      "EADDRNOTAVAIL" to 99,
+      "ENETDOWN" to 100,
+      "ENETUNREACH" to 101,
+      "ENETRESET" to 102,
+      "ECONNABORTED" to 103,
+      "ECONNRESET" to 104,
+      "ENOBUFS" to 105,
+      "EISCONN" to 106,
+      "ENOTCONN" to 107,
+      "ESHUTDOWN" to 108,
+      "ETOOMANYREFS" to 109,
+      "ETIMEDOUT" to 110,
+      "ECONNREFUSED" to 111,
+      "EHOSTDOWN" to 112,
+      "EHOSTUNREACH" to 113,
+      "EALREADY" to 114,
+      "EINPROGRESS" to 115,
+      "ESTALE" to 116,
+      "EUCLEAN" to 117,
+      "ENOTNAM" to 118,
+      "ENAVAIL" to 119,
+      "EISNAM" to 120,
+      "EREMOTEIO" to 121,
+      "EDQUOT" to 122,
+      "ENOMEDIUM" to 123,
+      "EMEDIUMTYPE" to 124,
+      "ECANCELED" to 125,
+      "ENOKEY" to 126,
+      "EKEYEXPIRED" to 127,
+      "EKEYREVOKED" to 128,
+      "EKEYREJECTED" to 129,
+      "EOWNERDEAD" to 130,
+      "ENOTRECOVERABLE" to 131,
+      "ERFKILL" to 132,
+      "EHWPOISON" to 133,
+    )
+    .let { values ->
+      // aliases glibc defines on top of the numbered ones
+      values +
+        mapOf(
+          "EWOULDBLOCK" to values.getValue("EAGAIN"),
+          "EDEADLOCK" to values.getValue("EDEADLK"),
+          "ENOTSUP" to values.getValue("EOPNOTSUPP"),
+        )
+    }
 
 fun fromName(s: String, parseContext: ParseContext): Expr<*>? =
   MacroExprs.entries.firstOrNull() { it.id == s }?.value?.invoke(parseContext)
+    ?: errnoValues[s]?.let { CComplexType.getSignedInt(parseContext).getValue(it.toString()) }

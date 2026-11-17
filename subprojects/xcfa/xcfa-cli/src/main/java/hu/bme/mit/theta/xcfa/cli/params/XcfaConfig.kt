@@ -13,13 +13,18 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  */
+@file:UseSerializers(FileSerializer::class)
+
 package hu.bme.mit.theta.xcfa.cli.params
 
 import com.beust.jcommander.Parameter
 import hu.bme.mit.theta.analysis.algorithm.loopchecker.abstraction.LoopCheckerSearchStrategy
 import hu.bme.mit.theta.analysis.algorithm.loopchecker.refinement.ASGTraceCheckerStrategy
-import hu.bme.mit.theta.analysis.algorithm.mdd.expressionnode.MddExpressionRepresentation
+import hu.bme.mit.theta.analysis.algorithm.mdd.cegar.LiteralPlacement
 import hu.bme.mit.theta.analysis.algorithm.mdd.fixedpoint.IterationStrategy
+import hu.bme.mit.theta.analysis.algorithm.mdd.node.expression.MddApproximation
+import hu.bme.mit.theta.analysis.algorithm.mdd.node.expression.MddExpressionRepresentation
+import hu.bme.mit.theta.analysis.algorithm.mdd.trace.TraceSearch
 import hu.bme.mit.theta.analysis.expr.refinement.PruneStrategy
 import hu.bme.mit.theta.common.logging.Logger
 import hu.bme.mit.theta.frontend.ParseContext
@@ -32,13 +37,18 @@ import hu.bme.mit.theta.xcfa.XcfaProperty
 import hu.bme.mit.theta.xcfa.analysis.oc.AutoConflictFinderConfig
 import hu.bme.mit.theta.xcfa.analysis.oc.OcDecisionProcedureType
 import hu.bme.mit.theta.xcfa.analysis.oc.XcfaOcMemoryConsistencyModel
+import hu.bme.mit.theta.xcfa.cli.utils.PrecReuseFormat
+import hu.bme.mit.theta.xcfa.cli.utils.PrecSerializationMode
 import hu.bme.mit.theta.xcfa.cli.utils.StringToXcfaPropertyConverter
 import hu.bme.mit.theta.xcfa.model.XCFA
-import hu.bme.mit.theta.xcfa.passes.LbePass
-import hu.bme.mit.theta.xcfa.passes.LoopUnrollPass
+import hu.bme.mit.theta.xcfa.passes.loops.UnrollPass
+import hu.bme.mit.theta.xcfa.passes.structure.LbePass
 import hu.bme.mit.theta.xcfa2chc.RankingFunction
 import java.io.File
 import java.nio.file.Paths
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
+import kotlinx.serialization.UseSerializers
 
 interface Config {
 
@@ -59,6 +69,7 @@ interface SpecializableConfig<T : Config> : Config {
     specConfig?.update() ?: createSpecConfig().let { specConfig != null }
 }
 
+@Serializable
 data class XcfaConfig<F : SpecFrontendConfig, B : SpecBackendConfig>(
   val inputConfig: InputConfig = InputConfig(),
   val frontendConfig: FrontendConfig<F> = FrontendConfig(),
@@ -81,18 +92,15 @@ data class XcfaConfig<F : SpecFrontendConfig, B : SpecBackendConfig>(
       .any { it }
 }
 
+@Serializable
 data class InputConfig(
   @Parameter(names = ["--input"], description = "Path of the input model") var input: File? = null,
   @Parameter(names = ["--cat"], description = "Path of the cat model") var catFile: File? = null,
   @Parameter(
-    names = ["--parse-ctx"],
-    description = "Path of the parse context JSON (may contain additional metadata)",
-  )
-  var parseCtx: File? = null,
-  @Parameter(
     names = ["--xcfa-w-ctx"],
-    description = "XCFA and ParseContext (will overwrite --input and --parse-ctx when given)",
+    description = "XCFA and ParseContext (will overwrite --input when given)",
   )
+  @Transient
   var xcfaWCtx: Triple<XCFA, MCM, ParseContext>? = null,
   @Parameter(
     names = ["--property"],
@@ -106,34 +114,53 @@ data class InputConfig(
     description = "Property",
     converter = StringToXcfaPropertyConverter::class,
   )
+  @Serializable(with = XcfaPropertySerializer::class)
   var property: XcfaProperty = XcfaProperty(ErrorDetection.ERROR_LOCATION),
 ) : Config {
 
   override fun toString(): String {
-    return "InputConfig(inputFile=${input}, catFile=${catFile}, parseCtx=${parseCtx}, " +
+    return "InputConfig(inputFile=${input}, catFile=${catFile}, " +
       "xcfaWCtx=${xcfaWCtx?.let { "present" } ?: "missing"}, propertyFile=${propertyFile}, inputProperty=${property.inputProperty}"
   }
 }
 
-interface SpecFrontendConfig : Config
+@Serializable sealed interface SpecFrontendConfig : Config
 
+@Serializable
 data class FrontendConfig<T : SpecFrontendConfig>(
   @Parameter(names = ["--lbe"], description = "Level of LBE (NO_LBE, LBE_SEQ, LBE_FULL, LBE_LOCAL)")
   var lbeLevel: LbePass.LbeLevel = LbePass.LbeLevel.LBE_SEQ,
   @Parameter(names = ["--static-coi"], description = "Enable static cone-of-influence")
   var enableStaticCoi: Boolean = false,
   @Parameter(
+    names = ["--ptr-size-in-memory"],
+    description = "Store the memsafety sizes in memory instead of an SMT array (OC backend only)",
+  )
+  var ptrSizeInMemory: Boolean = false,
+  @Parameter(
     names = ["--unroll"],
     description =
       "Max number of loop iterations to unroll (use -1 to unroll completely when possible)",
   )
-  var loopUnroll: Int = LoopUnrollPass.UNROLL_LIMIT,
+  var loopUnroll: Int = UnrollPass.UNROLL_LIMIT,
+  @Parameter(
+    names = ["--memory-init"],
+    description =
+      "Initial value of the dereference memory arrays: ZERO, UNCONSTRAINED or AUTO (ZERO for the MDD backend, whose fixpoint needs a finite set of initial states)",
+  )
+  var memoryInit: MemoryInit = MemoryInit.AUTO,
   @Parameter(
     names = ["--force-unroll"],
     description =
       "Number of loop iteration to unroll even if the number of iterations is unknown; in case of such a bounded loop unrolling, the safety result cannot be safe (use -1 to disable)",
   )
   var forceUnroll: Int = -1,
+  @Parameter(
+    names = ["--force-unroll-recursion"],
+    description =
+      "Number of times a recursive procedure call left over after inlining is expanded; calls still recursive at that depth are cut, so as with force unrolling the safety result cannot be safe (use -1 to disable). Lets backends that need a call-free CFA (e.g. OC) handle programs whose recursion depth is bounded.",
+  )
+  var forceUnrollRecursion: Int = -1,
   @Parameter(
     names = ["--datarace-to-reachability"],
     description =
@@ -146,6 +173,11 @@ data class FrontendConfig<T : SpecFrontendConfig>(
       "Enable the FetchExecuteWriteback pass, which introduces a local temp var for all memory accesses",
   )
   var enableFew: Boolean = false,
+  @Parameter(
+    names = ["--disable-spin-loop-effects"],
+    description = "Disable the pruning of loop iterations that change nothing (spinning)",
+  )
+  var disableSpinLoopEffects: Boolean = false,
   @Parameter(names = ["--input-type"], description = "Format of the input")
   var inputType: InputType = InputType.C,
   override var specConfig: T? = null,
@@ -156,16 +188,17 @@ data class FrontendConfig<T : SpecFrontendConfig>(
       when (inputType) {
         InputType.C -> CFrontendConfig() as T
         InputType.LLVM -> null
-        InputType.JSON -> null
         InputType.DSL -> null
         InputType.LITMUS -> null
         InputType.CFA -> null
         InputType.CHC -> CHCFrontendConfig() as T
         InputType.BTOR2 -> BTOR2FrontendConfig() as T
+        InputType.SVLIB -> null
       }
   }
 }
 
+@Serializable
 data class CFrontendConfig(
   @Parameter(
     names = ["--arithmetic"],
@@ -177,7 +210,43 @@ data class CFrontendConfig(
     description = "Architecture (see https://unix.org/whitepapers/64bit.html)",
   )
   var architecture: ArchitectureConfig.ArchitectureType = ArchitectureConfig.ArchitectureType.LP64,
-) : SpecFrontendConfig
+  @Parameter(
+    names = ["--memory-model"],
+    description =
+      "Pointer memory model: multi = 2-D arrays[base][offset] (default), flat = one flat address" +
+        " line as if every base were 0 (a pointer is a single scalar address), bytes = the flat" +
+        " line but byte-granular (every cell is one byte; wider scalars Concat/Extract). bytes" +
+        " requires bitvector arithmetic. Left unset, the model is multi, but the frontend may" +
+        " fall back to flat (then bytes, if flat is insufficient) for programs multi cannot" +
+        " represent; passing this flag explicitly disables that fallback.",
+  )
+  var memoryModel: ArchitectureConfig.MemoryModelType? = null,
+  @Parameter(names = ["--use-cir2c"], description = "Use Cir2C to preprocess files")
+  var useCir2c: Boolean = false,
+  @Parameter(
+    names = ["--cir2c-dir", "--cir2c-directory"],
+    description = "Folder with the run-cir2c.sh wrapper script (Cir2C pipeline)",
+  )
+  var cir2cDir: File = File("./cir2c"),
+  @Parameter(
+    names = ["--enable-signed-wraparound"],
+    description =
+      "Model signed integer overflow as modular (two's complement) wraparound. Signed overflow is" +
+        " undefined behavior before C23, so this is off by default; it is incompatible with" +
+        " overflow detection (no-overflow).",
+  )
+  var enableSignedWraparound: Boolean = false,
+) : SpecFrontendConfig {
+
+  /**
+   * The memory model actually in effect. [memoryModel] is null exactly when the user did not pass
+   * `--memory-model` at all, which is the only case in which the frontend is allowed to swap the
+   * model on its own (see the fallback in `frontend()`); an explicitly requested model -- even if
+   * it is the default `multi` -- is always honoured as given.
+   */
+  val effectiveMemoryModel: ArchitectureConfig.MemoryModelType
+    get() = memoryModel ?: ArchitectureConfig.MemoryModelType.multi
+}
 
 /** CHC-COMP benchmark categories. AUTO = infer from variable types (legacy behaviour). */
 enum class ChcCategory {
@@ -191,6 +260,7 @@ enum class ChcCategory {
   LRA_LIN,
 }
 
+@Serializable
 data class CHCFrontendConfig(
   @Parameter(
     names = ["--chc-transformation"],
@@ -209,13 +279,37 @@ data class CHCFrontendConfig(
   var category: ChcCategory = ChcCategory.AUTO,
 ) : SpecFrontendConfig
 
+@Serializable
 data class BTOR2FrontendConfig(
   @Parameter(names = ["--no-optimization"], description = "Runs frontend without XCFA passes")
   var btor2Passes: Boolean = false
 ) : SpecFrontendConfig
 
-interface SpecBackendConfig : Config
+@Serializable sealed interface SpecBackendConfig : Config
 
+/**
+ * Every solver the backend may use. Exhaustive over the backend configs, so a new one has to say
+ * which solvers it uses. A portfolio's and DSS's are not known up front: their sub-configurations
+ * pick their own.
+ */
+fun SpecBackendConfig.solverNames(): List<String> =
+  when (this) {
+    is CegarConfig -> listOf(abstractorConfig.abstractionSolver, refinerConfig.refinementSolver)
+    is AsgCegarConfig -> listOf(abstractorConfig.abstractionSolver, refinerConfig.refinementSolver)
+    is TracegenConfig -> listOf(abstractorConfig.abstractionSolver)
+    is HornConfig -> listOf(solver)
+    is LassoValidationConfig -> listOf(solver)
+    is BoundedConfig -> listOf(bmcConfig.bmcSolver, indConfig.indSolver, itpConfig.itpSolver)
+    is OcConfig -> listOf(smtSolver, unsatReferenceSolver)
+    is PortfolioConfig -> listOf()
+    is DssConfig -> listOf()
+    is MddConfig -> listOf(solver)
+    is MddCegarConfig -> listOf(solver, refinementSolver)
+    is Ic3Config -> listOf(solver)
+    is PathEnumerationConfig -> listOf(pathEnumerationSolver, abstractionSolver)
+  }.filter { it.isNotEmpty() }
+
+@Serializable
 data class BackendConfig<T : SpecBackendConfig>(
   @Parameter(names = ["--backend"], description = "Backend analysis to use")
   var backend: Backend = Backend.CEGAR,
@@ -228,11 +322,8 @@ data class BackendConfig<T : SpecBackendConfig>(
   var timeoutMs: Long = 0,
   @Parameter(names = ["--in-process"], description = "Run analysis in process")
   var inProcess: Boolean = false,
-  @Parameter(
-    names = ["--no-parse-in-process"],
-    description = "Don't parse input in process instead of passing intermediate",
-  )
-  var parseInProcess: Boolean = true,
+  /** Set by the portfolio for the configs it runs, so a config without a verdict can hand over. */
+  var portfolioStep: Boolean = false,
   @Parameter(
     names = ["--memlimit"],
     description = "Maximum memory to use when --in-process (in bytes, 0 for default)",
@@ -269,21 +360,21 @@ data class BackendConfig<T : SpecBackendConfig>(
         Backend.TRACEGEN -> TracegenConfig() as T
         Backend.MDD -> MddConfig() as T
         Backend.REFINERY -> null
+        Backend.MDD_CEGAR -> MddCegarConfig() as T
         Backend.NONE -> null
         Backend.IC3 -> Ic3Config() as T
+        Backend.DSS -> DssConfig() as T
       }
   }
 }
 
+@Serializable
 data class CegarConfig(
   @Parameter(names = ["--initprec"], description = "Initial precision")
   var initPrec: InitPrec = InitPrec.EMPTY,
+  @Parameter(names = ["--prec-file"], description = "File of precision to reuse")
+  var precFile: String? = null,
   @Parameter(names = ["--por"], description = "POR algorithm type") var por: POR = POR.NOPOR,
-  @Parameter(
-    names = ["--por-seed"],
-    description = "Random seed used by POR algorithms for testing purposes",
-  )
-  var porSeed: Int = -1,
   @Parameter(names = ["--coi"], description = "Enable ConeOfInfluence")
   var coi: ConeOfInfluenceMode = ConeOfInfluenceMode.NO_COI,
   @Parameter(
@@ -303,6 +394,7 @@ data class CegarConfig(
     listOf(abstractorConfig, refinerConfig).map { it.update() }.any { it }
 }
 
+@Serializable
 data class AsgCegarConfig(
   @Parameter(names = ["--initprec"], description = "Initial precision")
   var initPrec: InitPrec = InitPrec.EMPTY,
@@ -323,6 +415,7 @@ data class AsgCegarConfig(
     listOf(abstractorConfig, refinerConfig).map { it.update() }.any { it }
 }
 
+@Serializable
 data class TracegenConfig(
   @Parameter(names = ["--abstraction"], description = "Abstraction to be used for trace generation")
   var abstraction: TracegenAbstraction = TracegenAbstraction.NONE,
@@ -335,6 +428,7 @@ data class TracegenConfig(
   override fun update(): Boolean = listOf(abstractorConfig).map { it.update() }.any { it }
 }
 
+@Serializable
 data class CegarAbstractorConfig(
   @Parameter(names = ["--abstraction-solver"], description = "Abstraction solver name")
   var abstractionSolver: String = "Z3",
@@ -360,13 +454,14 @@ data class CegarAbstractorConfig(
   var havocMemory: Boolean = false,
 ) : Config
 
+@Serializable
 data class CegarRefinerConfig(
   @Parameter(names = ["--refinement-solver"], description = "Refinement solver name")
   var refinementSolver: String = "Z3",
   @Parameter(
     names = ["--validate-refinement-solver"],
     description =
-      "Activates a wrapper, which validates the assertions in the solver in each (SAT) check. Filters some solver issues.",
+      "Activates a wrapper, which validates the assertions in the solver in each (SAT) check, and every interpolant. Filters some solver issues.",
   )
   var validateRefinementSolver: Boolean = false,
   @Parameter(names = ["--refinement"], description = "Refinement strategy")
@@ -383,6 +478,7 @@ data class CegarRefinerConfig(
   var pruneStrategy: PruneStrategy = PruneStrategy.LAZY,
 ) : Config
 
+@Serializable
 data class AsgCegarAbstractorConfig(
   @Parameter(names = ["--abstraction-solver"], description = "Abstraction solver name")
   var abstractionSolver: String = "Z3",
@@ -404,13 +500,14 @@ data class AsgCegarAbstractorConfig(
   var search: LoopCheckerSearchStrategy = LoopCheckerSearchStrategy.NDFS,
 ) : Config
 
+@Serializable
 data class AsgCegarRefinerConfig(
   @Parameter(names = ["--refinement-solver"], description = "Refinement solver name")
   var refinementSolver: String = "Z3",
   @Parameter(
     names = ["--validate-refinement-solver"],
     description =
-      "Activates a wrapper, which validates the assertions in the solver in each (SAT) check. Filters some solver issues.",
+      "Activates a wrapper, which validates the assertions in the solver in each (SAT) check, and every interpolant. Filters some solver issues.",
   )
   var validateRefinementSolver: Boolean = false,
   @Parameter(names = ["--refinement"], description = "Refinement strategy")
@@ -422,6 +519,7 @@ data class AsgCegarRefinerConfig(
   var exprSplitter: ExprSplitterOptions = ExprSplitterOptions.WHOLE,
 ) : Config
 
+@Serializable
 data class HornConfig(
   @Parameter(names = ["--solver"], description = "Solver to use.") var solver: String = "Z3:new",
   @Parameter(
@@ -437,6 +535,7 @@ data class HornConfig(
   var rankingFuncConstr: RankingFunction = RankingFunction.ADD,
 ) : SpecBackendConfig
 
+@Serializable
 data class LassoValidationConfig(
   @Parameter(names = ["--solver"], description = "Solver to use.") var solver: String = "Z3:new",
   @Parameter(
@@ -449,6 +548,7 @@ data class LassoValidationConfig(
   var witness: File? = null,
 ) : SpecBackendConfig
 
+@Serializable
 data class BoundedConfig(
   @Parameter(names = ["--max-bound"], description = "Maximum bound to check. Use 0 for no limit.")
   var maxBound: Int = 0,
@@ -458,6 +558,11 @@ data class BoundedConfig(
   var cegar: Boolean = false,
   @Parameter(names = ["--initprec"], description = "Wrap the check in a predicate-based CEGAR loop")
   var initPrec: InitPrec = InitPrec.EMPTY,
+  @Parameter(
+    names = ["--block-encoding"],
+    description = "One step per loop-free block instead of per edge (single-threaded reachability)",
+  )
+  var blockEncoding: Boolean = false,
   val bmcConfig: BMCConfig = BMCConfig(),
   val indConfig: InductionConfig = InductionConfig(),
   val itpConfig: InterpolationConfig = InterpolationConfig(),
@@ -474,6 +579,7 @@ data class BoundedConfig(
     listOf(bmcConfig, indConfig, itpConfig).map { it.update() }.any { it }
 }
 
+@Serializable
 data class BMCConfig(
   @Parameter(names = ["--no-bmc"], description = "Disable SAT check") var disable: Boolean = false,
   @Parameter(names = ["--non-lf-path"], description = "Disable loop-freeness check")
@@ -488,6 +594,7 @@ data class BMCConfig(
   var validateBMCSolver: Boolean = false,
 ) : Config
 
+@Serializable
 data class InductionConfig(
   @Parameter(names = ["--no-induction"], description = "Disable induction check")
   var disable: Boolean = false,
@@ -505,6 +612,7 @@ data class InductionConfig(
   var indFreq: Int = 1,
 ) : Config
 
+@Serializable
 data class InterpolationConfig(
   @Parameter(names = ["--no-interpolation"], description = "Disable interpolation check")
   var disable: Boolean = false,
@@ -516,19 +624,18 @@ data class InterpolationConfig(
   @Parameter(
     names = ["--validate-interpolation-solver"],
     description =
-      "Activates a wrapper, which validates the assertions in the solver in each (SAT) check. Filters some solver issues.",
+      "Activates a wrapper, which validates the assertions in the solver in each (SAT) check, and every interpolant. Filters some solver issues.",
   )
   var validateItpSolver: Boolean = false,
 ) : Config
 
+@Serializable
 data class OcConfig(
   @Parameter(
     names = ["--oc-decision-procedure"],
     description = "Decision procedure for ordering-consistency check",
   )
-  var decisionProcedure: OcDecisionProcedureType = OcDecisionProcedureType.PROPAGATOR,
-  @Parameter(names = ["--input-conflicts"], description = "Input file containing conflict clauses")
-  var inputConflictClauseFile: String? = null,
+  var decisionProcedure: OcDecisionProcedureType = OcDecisionProcedureType.BASIC,
   @Parameter(names = ["--output-conflicts"], description = "Enables conflict clause logging")
   var outputConflictClauses: Boolean = false,
   @Parameter(
@@ -536,11 +643,6 @@ data class OcConfig(
     description = "Output file to write conflict clauses",
   )
   var inputConflictDecisionProcedure: String = "",
-  @Parameter(
-    names = ["--non-permissive-validation"],
-    description = "Output file to write conflict clauses",
-  )
-  var nonPermissiveValidation: Boolean = false,
   @Parameter(
     names = ["--auto-conflict"],
     description = "Level of manual conflict detection before verification",
@@ -555,13 +657,48 @@ data class OcConfig(
   var memoryConsistencyModel: XcfaOcMemoryConsistencyModel = XcfaOcMemoryConsistencyModel.SC,
   @Parameter(names = ["--oc-solver"], description = "SMT solver for OC solving")
   var smtSolver: String = "Z3:new",
+  @Parameter(
+    names = ["--validate-solver"],
+    description =
+      "Activates a wrapper, which validates the assertions in the OC solver in each (SAT) check. Filters some solver issues.",
+  )
+  var validateSolver: Boolean = false,
+  @Parameter(
+    names = ["--oc-unsat-reference-solver"],
+    description =
+      "Cross-checks every UNSAT answer of the OC solver by asking this solver the same question, and fails on a disagreement (implies --validate-solver). Slow; for diagnosing solver issues.",
+  )
+  var unsatReferenceSolver: String = "",
+  @Parameter(
+    names = ["--oc-unroll-start"],
+    description = "First force loop unrolling bound for OC checker",
+  )
+  var forceUnrollBoundStart: Int = 2,
+  @Parameter(
+    names = ["--oc-unroll-end"],
+    description = "Upper force loop unrolling bound for OC checker (-1 for no limit)",
+  )
+  var forceUnrollBoundEnd: Int = -1,
+  @Parameter(
+    names = ["--oc-unroll-step"],
+    description = "Step size for force loop unrolling bound for OC checker",
+  )
+  var forceUnrollBoundStep: Int = 1,
+  @Parameter(
+    names = ["--oc-max-exit-queries"],
+    description =
+      "Unroll exit reachability queries per round of the OC checker, which pick the loops to unroll deeper (0: none, every loop is unrolled deeper; -1: no limit)",
+  )
+  var maxExitQueries: Int = -1,
 ) : SpecBackendConfig
 
+@Serializable
 data class PortfolioConfig(
   @Parameter(names = ["--portfolio"], description = "Portfolio to run")
   var portfolio: String = "COMPLEX"
 ) : SpecBackendConfig
 
+@Serializable
 data class MddConfig(
   @Parameter(names = ["--solver", "--mdd-solver"], description = "MDD solver name")
   var solver: String = "Z3",
@@ -581,7 +718,7 @@ data class MddConfig(
     description = "MDD to expression conversion strategy",
   )
   var lookAheadStrategy: MddExpressionRepresentation.MddToExprStrategy =
-    MddExpressionRepresentation.MddToExprStrategy.VARIABLE_LEVEL,
+    MddExpressionRepresentation.MddToExprStrategy.NODE_LEVEL,
   @Parameter(
     names = ["--proof-strategy"],
     description = "MDD to expression conversion strategy for the proof invariant",
@@ -591,10 +728,39 @@ data class MddConfig(
   @Parameter(names = ["--trace-timeout"], description = "Timeout for trace generation")
   var traceTimeout: Long = 10,
   @Parameter(
+    names = ["--trace-search"],
+    description =
+      "Counterexample search over the state space: DFS (backward, one predecessor per step), BFS (forward layers, shortest counterexample) or BFS_BACKWARD (backward layers from all violating states)",
+  )
+  var traceSearch: TraceSearch = TraceSearch.DFS,
+  @Parameter(
     names = ["--solver-measurements"],
     description = "Perform a structural rerun to estimate solver time overhead",
   )
   var solverMeasurements: Boolean = false,
+  @Parameter(
+    names = ["--edge-cap-strategy"],
+    description =
+      "What to do with a decision diagram node that exceeds --edge-limit: NONE gives up (verification stuck), UNDER keeps the edges found so far and keeps only an unsafe verdict",
+  )
+  var edgeCapStrategy: MddApproximation.Strategy = MddApproximation.Strategy.UNDER,
+  @Parameter(
+    names = ["--edge-limit"],
+    description =
+      "Explicit edges allowed on a single decision diagram node before --edge-cap-strategy applies",
+  )
+  var edgeLimit: Int = MddApproximation.DEFAULT_EDGE_LIMIT,
+  @Parameter(
+    names = ["--symbolic-values"],
+    description =
+      "Keep values the program leaves free symbolic, with a formula over them in the terminals",
+  )
+  var symbolicValues: Boolean = false,
+  @Parameter(
+    names = ["--qe-solver"],
+    description = "Solver for the quantifier elimination of --symbolic-values",
+  )
+  var qeSolver: String = "Z3:new",
   @Parameter(names = ["--reversed"], description = "Create a reversed monolithic expression")
   var reversed: Boolean = false,
   @Parameter(names = ["--cegar"], description = "Wrap the check in a predicate-based CEGAR loop")
@@ -603,6 +769,68 @@ data class MddConfig(
   var initPrec: InitPrec = InitPrec.EMPTY,
 ) : SpecBackendConfig
 
+enum class MddCegarRefinement {
+  SEQ_ITP,
+  FW_BIN_ITP,
+  BW_BIN_ITP,
+}
+
+@Serializable
+data class MddCegarConfig(
+  @Parameter(names = ["--solver", "--mdd-solver"], description = "MDD solver name")
+  var solver: String = "Z3",
+  @Parameter(
+    names = ["--refinement-solver"],
+    description = "Solver for the trace check / interpolation (defaults to --solver)",
+  )
+  var refinementSolver: String = "",
+  @Parameter(names = ["--refinement"], description = "Trace checker used for refinement")
+  var refinement: MddCegarRefinement = MddCegarRefinement.SEQ_ITP,
+  @Parameter(
+    names = ["--validate-solver", "--validate-mdd-solver"],
+    description =
+      "Activates a wrapper, which validates the assertions in the solver in each (SAT) check. Filters some solver issues.",
+  )
+  var validateSolver: Boolean = false,
+  @Parameter(
+    names = ["--iteration-strategy"],
+    description = "Iteration strategy for the MDD checker",
+  )
+  var iterationStrategy: IterationStrategy = IterationStrategy.GSAT,
+  @Parameter(
+    names = ["--look-ahead-strategy"],
+    description = "MDD to expression conversion strategy",
+  )
+  var lookAheadStrategy: MddExpressionRepresentation.MddToExprStrategy =
+    MddExpressionRepresentation.MddToExprStrategy.NONE,
+  @Parameter(
+    names = ["--proof-strategy"],
+    description = "MDD to expression conversion strategy for the proof invariant",
+  )
+  var proofStrategy: MddExpressionRepresentation.MddToExprStrategy =
+    MddExpressionRepresentation.MddToExprStrategy.NODE_LEVEL,
+  @Parameter(names = ["--trace-timeout"], description = "Timeout for trace generation")
+  var traceTimeout: Long = 10,
+  @Parameter(
+    names = ["--on-the-fly-reachability"],
+    description = "Terminate saturation as soon as a violating state is reached",
+  )
+  var onTheFlyReachability: Boolean = false,
+  @Parameter(
+    names = ["--literal-placement"],
+    description =
+      "Where the literal levels go in the MDD orders: FORCE (the FORCE ordering of ctrl vars and literals, rebuilt every iteration) or TOP (each new literal on top of the existing levels)",
+  )
+  var literalPlacement: LiteralPlacement = LiteralPlacement.FORCE,
+  @Parameter(
+    names = ["--trace-search"],
+    description =
+      "Search for the abstract counterexample: BFS (forward layers then one backward step per layer: shortest counterexample), BFS_BACKWARD (backward layers from all violating states) or DFS (backward, one predecessor per step, order-dependent length)",
+  )
+  var traceSearch: TraceSearch = TraceSearch.BFS,
+) : SpecBackendConfig
+
+@Serializable
 data class Ic3Config(
   @Parameter(names = ["--solver", "--mdd-solver"], description = "MDD solver name")
   var solver: String = "Z3",
@@ -620,6 +848,7 @@ data class Ic3Config(
   var initPrec: InitPrec = InitPrec.EMPTY,
 ) : SpecBackendConfig
 
+@Serializable
 data class OutputConfig(
   @Parameter(names = ["--version"], description = "Display version", help = true)
   var versionInfo: Boolean = false,
@@ -638,6 +867,8 @@ data class OutputConfig(
   val cOutputConfig: COutputConfig = COutputConfig(),
   val xcfaOutputConfig: XcfaOutputConfig = XcfaOutputConfig(),
   val chcOutputConfig: ChcOutputConfig = ChcOutputConfig(),
+  val svLibOutputConfig: SvLibOutputConfig = SvLibOutputConfig(),
+  val precOutputConfig: PrecOutputConfig = PrecOutputConfig(),
   val witnessConfig: WitnessConfig = WitnessConfig(),
   val argConfig: ArgConfig = ArgConfig(),
 ) : Config {
@@ -647,24 +878,53 @@ data class OutputConfig(
       cOutputConfig.getObjects() union
       xcfaOutputConfig.getObjects() union
       chcOutputConfig.getObjects() union
+      precOutputConfig.getObjects() union
       witnessConfig.getObjects() union
       argConfig.getObjects()
   }
 
   override fun update(): Boolean =
-    listOf(cOutputConfig, xcfaOutputConfig, chcOutputConfig, witnessConfig, argConfig)
+    listOf(
+        cOutputConfig,
+        xcfaOutputConfig,
+        chcOutputConfig,
+        precOutputConfig,
+        witnessConfig,
+        argConfig,
+      )
       .map { it.update() }
       .any { it }
 }
 
+@Serializable
 data class XcfaOutputConfig(
   @Parameter(names = ["--enable-xcfa-serialization"]) var enabled: Boolean = false
 ) : Config
 
+@Serializable
 data class ChcOutputConfig(
   @Parameter(names = ["--enable-chc-serialization"]) var enabled: Boolean = false
 ) : Config
 
+@Serializable
+data class SvLibOutputConfig(
+  @Parameter(
+    names = ["--enable-svlib-witness"],
+    description =
+      "Activates witness generation regardless of the presence of (get-witness) in the input.",
+  )
+  var generateWitness: Boolean = false
+) : Config
+
+@Serializable
+data class PrecOutputConfig(
+  @Parameter(names = ["--prec-serialization-format"], variableArity = true)
+  var format: List<PrecReuseFormat> = PrecReuseFormat.entries,
+  @Parameter(names = ["--prec-serialization-mode"])
+  var serializationMode: PrecSerializationMode = PrecSerializationMode.NEVER,
+) : Config
+
+@Serializable
 data class COutputConfig(
   @Parameter(names = ["--enable-c-serialization"]) var enabled: Boolean = false,
   @Parameter(names = ["--to-c-use-arrays"]) var useArr: Boolean = false,
@@ -672,6 +932,7 @@ data class COutputConfig(
   @Parameter(names = ["--to-c-use-ranges"]) var useRange: Boolean = false,
 ) : Config
 
+@Serializable
 data class WitnessConfig(
   @Parameter(names = ["--witness-generation"]) var enabled: WitnessLevel = WitnessLevel.ALL,
   @Parameter(names = ["--cex-solver"], description = "Concretizer solver name")
@@ -685,9 +946,11 @@ data class WitnessConfig(
   @Parameter(names = ["--input-file-for-witness"]) var inputFileForWitness: File? = null,
 ) : Config
 
+@Serializable
 data class ArgConfig(@Parameter(names = ["--enable-arg-generation"]) var enabled: Boolean = false) :
   Config
 
+@Serializable
 data class DebugConfig(
   @Parameter(
     names = ["--debug"],
@@ -711,6 +974,7 @@ data class DebugConfig(
   var argToFile: Boolean = false,
 ) : Config
 
+@Serializable
 data class PathEnumerationConfig(
   @Parameter(names = ["--path-enumeration-solver"], description = "Path enumeration solver name")
   var pathEnumerationSolver: String = "Z3",
@@ -725,8 +989,6 @@ data class PathEnumerationConfig(
   @Parameter(names = ["--prec"], description = "Precision") var initPrec: InitPrec = InitPrec.EMPTY,
   @Parameter(names = ["--por-level"], description = "POR dependency level")
   var porLevel: POR = POR.NOPOR,
-  @Parameter(names = ["--por-seed"], description = "Random seed used for DPOR")
-  var porRandomSeed: Int = -1,
   @Parameter(names = ["--coi"], description = "Enable ConeOfInfluence")
   var coi: ConeOfInfluenceMode = ConeOfInfluenceMode.NO_COI,
   @Parameter(names = ["--abstraction-solver"], description = "Abstraction solver name")

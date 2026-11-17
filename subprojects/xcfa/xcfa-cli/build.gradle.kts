@@ -27,6 +27,7 @@ dependencies {
     implementation(project(":theta-solver"))
     implementation(project(":theta-c-frontend"))
     implementation(project(":theta-chc-frontend"))
+    implementation(project(":theta-svlib-frontend"))
     implementation(project(":theta-core"))
     implementation(project(":theta-analysis"))
     implementation(project(":theta-xcfa"))
@@ -36,10 +37,10 @@ dependencies {
     implementation(project(":theta-solver-z3"))
     implementation(project(":theta-solver-z3-legacy"))
     implementation(project(":theta-solver-smtlib"))
+    testImplementation(testFixtures(project(":theta-solver-smtlib")))
     implementation(project(":theta-solver-javasmt"))
     implementation(project(":theta-solver"))
     implementation(project(":theta-c-frontend"))
-    implementation(project(":theta-grammar"))
     implementation(project(":theta-llvm2xcfa"))
     implementation(project(":theta-litmus2xcfa"))
     implementation(project(":theta-graph-solver"))
@@ -48,6 +49,7 @@ dependencies {
     implementation(files(rootDir.resolve(Deps.z3legacy)))
     implementation(Deps.z3)
     implementation("com.zaxxer:nuprocess:2.0.5")
+    implementation(Deps.kotlinxSerializationJson)
     implementation("org.jetbrains.kotlin:kotlin-scripting-jsr223:${Versions.kotlin}")
     implementation(project(":theta-btor2-frontend"))
     implementation(project(":theta-btor2xcfa"))
@@ -62,7 +64,9 @@ archivePackaging {
     variant {
         toolName = "Theta-svcomp"
         inputFlags = "--svcomp --portfolio STABLE"
-        solvers = listOf("cvc5:1.2.0", "cvc5:1.0.8", "mathsat:5.6.12", "mathsat:5.6.10")
+        // One version per solver family: the portfolios pin the same versions, and shipping
+        // several invites the code and the archive to drift apart.
+        solvers = listOf("cvc5:1.3.4", "mathsat:5.6.19", "bitwuzla:0.9.1")
         readmeTemplate = file("src/main/resources/archive-packaging/README-SVCOMP.md")
         smoketestSource = file("src/main/resources/archive-packaging/smoketest.sh")
         inputSource = file("src/main/resources/archive-packaging/input.c")
@@ -70,7 +74,15 @@ archivePackaging {
     variant {
         toolName = "EmergenTheta-svcomp"
         inputFlags = "--svcomp --portfolio EMERGENT"
-        solvers = listOf("cvc5:1.2.0", "cvc5:1.0.8", "mathsat:5.6.12", "mathsat:5.6.10")
+        solvers = listOf("cvc5:1.3.4", "mathsat:5.6.19")
+        readmeTemplate = file("src/main/resources/archive-packaging/README-SVCOMP.md")
+        smoketestSource = file("src/main/resources/archive-packaging/smoketest.sh")
+        inputSource = file("src/main/resources/archive-packaging/input.c")
+    }
+    variant {
+        toolName = "SymbolicTheta-svcomp"
+        inputFlags = "--svcomp --portfolio SYMBOLIC"
+        solvers = listOf("cvc5:1.3.4", "mathsat:5.6.19", "bitwuzla:0.9.1")
         readmeTemplate = file("src/main/resources/archive-packaging/README-SVCOMP.md")
         smoketestSource = file("src/main/resources/archive-packaging/smoketest.sh")
         inputSource = file("src/main/resources/archive-packaging/input.c")
@@ -89,5 +101,141 @@ archivePackaging {
         solvers = listOf("cvc5:1.0.8", "mathsat:5.6.10")
         readmeTemplate = file("src/main/resources/archive-packaging/README-CHCCOMP.md")
         scriptName = "chc"
+    }
+}
+
+// PackagedSolverTest reads the solver lists out of this file, so it is a test input: without
+// this Gradle judges the test up to date after the list changes, which is exactly when it matters.
+tasks.test { inputs.file("build.gradle.kts") }
+
+// The canary suite (see `canaries/README.md`) as a registered Gradle test task.
+//
+// Not part of `test`: a sweep takes ~20 minutes and needs a built Theta-svcomp distribution plus a
+// local sv-benchmarks checkout, neither of which a fresh clone has. As its own task it stays
+// discoverable and reports one JUnit result per canary instead of a single exit code; when the
+// prerequisites are missing it skips rather than fails (see CanarySuiteTest).
+val canaryTest by
+    tasks.registering(Test::class) {
+        group = "verification"
+        description =
+            "Runs the canary suite (real SV-COMP tasks + feature-guard fixtures) against the built " +
+            "Theta-svcomp distribution. Set -Ptheta.canary.mode=full to check verdicts rather " +
+            "than only that the frontend builds each task."
+
+        testClassesDirs = sourceSets["test"].output.classesDirs
+        classpath = sourceSets["test"].runtimeClasspath
+        filter { includeTestsMatching("*CanarySuiteTest*") }
+
+        // The suite needs the packaged distribution, not just the classes. Referenced by name
+        // because the archive-packaging plugin registers its variants after this block is evaluated.
+        dependsOn("buildArchiveTheta-svcomp")
+        // The filter below matches a compiled class, so the test classes have to exist even when
+        // this task is invoked on its own; without it the task can fail with "No tests found".
+        dependsOn(tasks.named("testClasses"))
+
+        systemProperty(
+            "theta.canary.home",
+            layout.projectDirectory
+                .dir("canaries")
+                .asFile.absolutePath,
+        )
+        systemProperty("theta.canary.repoRoot", rootDir.absolutePath)
+        systemProperty(
+            "theta.canary.dist",
+            layout.buildDirectory
+                .dir("distributions/Theta-svcomp")
+                .get()
+                .asFile.absolutePath,
+        )
+        systemProperty("theta.canary.mode", (project.findProperty("theta.canary.mode") ?: "parse").toString())
+        // The sweep runs this many tasks at once (default 4). Lowering it trades wall time for
+        // memory headroom on a shared machine. The largest canaries need several GB each, so this
+        // is pressure relief, not a substitute for enough memory.
+        (project.findProperty("theta.canary.jobs"))?.let {
+            systemProperty("theta.canary.jobs", it.toString())
+        }
+        // Point `full` mode at a subset; the whole list is far too slow to verify end to end.
+        (project.findProperty("theta.canary.tsv"))?.let {
+            systemProperty("theta.canary.tsv", it.toString())
+        }
+        (project.findProperty("theta.canary.svBenchmarks"))?.let {
+            systemProperty("theta.canary.svBenchmarks", it.toString())
+        }
+
+        // The result depends on the benchmarks and the built archive, not only on this project's
+        // inputs, so caching a green run would hide a regression in either.
+        outputs.upToDateWhen { false }
+
+        testLogging {
+            events("failed", "skipped")
+            showStandardStreams = false
+            // The message carries the run's diagnosis; the stack trace is only the test harness.
+            exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+            showStackTraces = false
+        }
+    }
+
+// The feature-guard fixtures, which are the fast half of the canary gate: minimal programs that
+// each isolate one change, so reverting that change flips the fixture. Separate from `canaryTest`
+// because it needs no sv-benchmarks *tasks*, only the property files, and runs in a couple of
+// minutes rather than twenty.
+val fixtureTest by
+    tasks.registering(Test::class) {
+        group = "verification"
+        description =
+            "Runs the feature-guard fixtures against the built Theta-svcomp distribution. Needs a " +
+            "local sv-benchmarks checkout for the property files; it never downloads one."
+
+        testClassesDirs = sourceSets["test"].output.classesDirs
+        classpath = sourceSets["test"].runtimeClasspath
+        filter { includeTestsMatching("*FixtureSuiteTest*") }
+
+        dependsOn("buildArchiveTheta-svcomp")
+        dependsOn(tasks.named("testClasses"))
+
+        systemProperty(
+            "theta.canary.home",
+            layout.projectDirectory
+                .dir("canaries")
+                .asFile.absolutePath,
+        )
+        systemProperty("theta.canary.repoRoot", rootDir.absolutePath)
+        systemProperty(
+            "theta.canary.dist",
+            layout.buildDirectory
+                .dir("distributions/Theta-svcomp")
+                .get()
+                .asFile.absolutePath,
+        )
+        (project.findProperty("theta.canary.svBenchmarks"))?.let {
+            systemProperty("theta.canary.svBenchmarks", it.toString())
+        }
+        // Rows run this many at once (default 4).
+        (project.findProperty("theta.fixture.jobs"))?.let {
+            systemProperty("theta.fixture.jobs", it.toString())
+        }
+
+        // Depends on the benchmarks and the built archive, not only on this project's inputs.
+        outputs.upToDateWhen { false }
+
+        testLogging {
+            events("failed", "skipped")
+            showStandardStreams = false
+            // The message carries the run's diagnosis; the stack trace is only the test harness.
+            exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+            showStackTraces = false
+        }
+    }
+
+// The fixtures are part of the canary gate, so one command still runs both.
+canaryTest { dependsOn(fixtureTest) }
+
+// Keep the long sweeps out of the ordinary test task.
+tasks.named<Test>("test") {
+    // native solver memory outlives the tests that used it: a JVM per class keeps it bounded
+    forkEvery = 1
+    filter {
+        excludeTestsMatching("*CanarySuiteTest*")
+        excludeTestsMatching("*FixtureSuiteTest*")
     }
 }

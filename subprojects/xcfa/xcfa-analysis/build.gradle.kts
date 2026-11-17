@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -23,12 +23,19 @@ dependencies {
     implementation(project(":theta-analysis"))
     implementation(project(":theta-solver"))
     implementation(project(":theta-solver-javasmt"))
+    implementation(Deps.javasmt)
     implementation(project(":theta-solver-z3"))
     implementation(project(":theta-xcfa"))
     implementation(project(":theta-c-frontend"))
     implementation(Deps.refineryStoreDseDev)
     implementation(Deps.refineryLanguageSemanticsDev)
+    implementation(project(":theta-grammar"))
     testImplementation(project(":theta-c2xcfa"))
     testImplementation(project(":theta-solver-z3-legacy"))
     testImplementation(project(":theta-solver"))
+    testImplementation(project(":theta-xcfa-cli"))
+    testImplementation(project(":theta-graph-solver"))
 }
+
+// Native solver memory outlives the tests that used it: a JVM per class keeps it bounded.
+tasks.test { forkEvery = 1 }

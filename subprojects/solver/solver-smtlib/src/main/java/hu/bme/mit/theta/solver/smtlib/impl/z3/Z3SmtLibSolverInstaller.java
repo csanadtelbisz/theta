@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -210,11 +210,7 @@ public class Z3SmtLibSolverInstaller extends SmtLibSolverInstaller.Default {
         logger.write(Logger.Level.MAINSTEP, "Starting download (%s)...\n", downloadUrl.toString());
         try (final var inputStream = downloadUrl.toURL().openStream()) {
             Compress.extract(inputStream, installDir, Compress.CompressionType.ZIP);
-            installDir
-                    .resolve("bin")
-                    .resolve(getSolverBinaryName())
-                    .toFile()
-                    .setExecutable(true, true);
+            makeExecutable(installDir.resolve("bin").resolve(getSolverBinaryName()));
         } catch (IOException e) {
             throw new SmtLibSolverInstallerException(e);
         }
@@ -273,7 +269,7 @@ public class Z3SmtLibSolverInstaller extends SmtLibSolverInstaller.Default {
             case LINUX:
                 return "z3";
             case MAC:
-                return "z3.dmg";
+                return "z3";
             default:
                 throw new AssertionError();
         }

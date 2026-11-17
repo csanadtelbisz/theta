@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -76,7 +76,9 @@ fun getAsgCegarChecker(
 
   val ignoredVarRegistry = mutableMapOf<VarDecl<*>, MutableSet<ExprState>>()
 
-  val lts = ConeOfInfluenceMode.NO_COI.getLts(xcfa, parseContext, POR.NOPOR, ignoredVarRegistry)
+  val random = explorationRandom()
+  val lts =
+    ConeOfInfluenceMode.NO_COI.getLts(xcfa, parseContext, POR.NOPOR, ignoredVarRegistry, random)
 
   val abstractionSolverInstance = abstractionSolverFactory.createSolver()
 
@@ -158,6 +160,7 @@ fun getAsgCegarChecker(
       refinementSolverFactory,
       precRefiner,
       logger,
+      traceEnricher = ::threadWriteTriples,
     )
 
   val checker =

@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -19,6 +19,9 @@ import com.google.common.base.Preconditions
 import hu.bme.mit.theta.analysis.Prec
 import hu.bme.mit.theta.analysis.Trace
 import hu.bme.mit.theta.analysis.algorithm.arg.ARG
+import hu.bme.mit.theta.analysis.algorithm.asg.ASGEdge
+import hu.bme.mit.theta.analysis.algorithm.asg.ASGNode
+import hu.bme.mit.theta.analysis.algorithm.asg.ASGTrace
 import hu.bme.mit.theta.analysis.algorithm.cegar.RefinerResult
 import hu.bme.mit.theta.analysis.expr.ExprAction
 import hu.bme.mit.theta.analysis.expr.ExprState
@@ -27,7 +30,64 @@ import hu.bme.mit.theta.analysis.ptr.PtrState
 import hu.bme.mit.theta.analysis.ptr.WriteTriples
 import hu.bme.mit.theta.analysis.ptr.patch
 import hu.bme.mit.theta.common.logging.Logger
+import hu.bme.mit.theta.core.model.Valuation
 import java.util.*
+
+/**
+ * Abstract actions only know their own memory writes, so a read would bind to the unconstrained
+ * initial memory instead of an earlier write on the path. This re-threads the writes along
+ * [rawTrace].
+ */
+fun <S : ExprState, A : ExprAction> threadWriteTriples(rawTrace: Trace<S, A>): Trace<S, A> {
+  val (_, states, actions) =
+    rawTrace.actions.foldIndexed(
+      Triple(Pair(emptyMap(), 0), listOf(rawTrace.getState(0)), listOf())
+    ) {
+      i: Int,
+      (wTripleCnt: Pair<WriteTriples, Int>, states: List<S>, actions: List<A>): Triple<
+        Pair<WriteTriples, Int>,
+        List<S>,
+        List<A>,
+      >,
+      a: A ->
+      val (wTriple, cnt) = wTripleCnt
+      val newA = (a as XcfaAction).withLastWrites(wTriple, cnt)
+      val newState =
+        (rawTrace.getState(i + 1) as XcfaState<PtrState<*>>).let {
+          it.withState(PtrState(it.sGlobal.innerState.patch(newA.nextWriteTriples())))
+        }
+      Triple(
+        Pair(newA.nextWriteTriples(), newA.cnts.values.maxOrNull() ?: newA.inCnt),
+        states + (newState as S),
+        actions + (newA as A),
+      )
+    }
+  return Trace.of(states, actions)
+}
+
+/** [trace] with the havoc values [valuations], one per state, determine as hints. */
+private fun <S : ExprState, A : ExprAction> withInputs(
+  trace: Trace<S, A>,
+  valuations: List<Valuation>,
+): Trace<S, A> {
+  if (valuations.size != trace.states.size || trace.actions.any { it !is XcfaAction }) return trace
+  return HintedTrace.of(trace.states, trace.actions as List<XcfaAction>, valuations) as Trace<S, A>
+}
+
+/**
+ * [threadWriteTriples] over a lasso (tail, then one pass of the loop). The honda gets a node of its
+ * own at the end, as the state closing the loop must also see the writes of the loop.
+ */
+fun <S : ExprState, A : ExprAction> threadWriteTriples(lasso: ASGTrace<S, A>): ASGTrace<S, A> {
+  val trace = threadWriteTriples(lasso.toTrace())
+  val accepting = lasso.edges.map { it.source!!.accepting } + lasso.honda.accepting
+  val nodes = trace.states.mapIndexed { i, state -> ASGNode<S, A>(state, accepting[i]) }
+  val edges =
+    lasso.edges.mapIndexed { i, edge ->
+      ASGEdge(nodes[i], nodes[i + 1], trace.getAction(i), edge.accepting)
+    }
+  return ASGTrace(edges.take(lasso.tail.size), nodes.last(), edges.drop(lasso.tail.size))
+}
 
 class XcfaSingleExprTraceRefiner<S : ExprState, A : ExprAction, P : Prec, R : Refutation> :
   SingleExprTraceRefiner<S, A, P, R> {
@@ -70,31 +130,7 @@ class XcfaSingleExprTraceRefiner<S : ExprState, A : ExprAction, P : Prec, R : Re
     assert(!arg.isSafe) { "ARG must be unsafe" }
     val optionalNewCex = arg.cexs.findFirst()
     val cexToConcretize = optionalNewCex.get()
-    val rawTrace = cexToConcretize.toTrace()
-    val (_, states, actions) =
-      rawTrace.actions.foldIndexed(
-        Triple(Pair(emptyMap(), 0), listOf(rawTrace.getState(0)), listOf())
-      ) {
-        i: Int,
-        (wTripleCnt: Pair<WriteTriples, Int>, states: List<S>, actions: List<A>): Triple<
-          Pair<WriteTriples, Int>,
-          List<S>,
-          List<A>,
-        >,
-        a: A ->
-        val (wTriple, cnt) = wTripleCnt
-        val newA = (a as XcfaAction).withLastWrites(wTriple, cnt)
-        val newState =
-          (rawTrace.getState(i + 1) as XcfaState<PtrState<*>>).let {
-            it.withState(PtrState(it.sGlobal.innerState.patch(newA.nextWriteTriples())))
-          }
-        Triple(
-          Pair(newA.nextWriteTriples(), newA.cnts.values.maxOrNull() ?: newA.inCnt),
-          states + (newState as S),
-          actions + (newA as A),
-        )
-      }
-    val traceToConcretize = Trace.of(states, actions)
+    val traceToConcretize = threadWriteTriples(cexToConcretize.toTrace())
 
     logger.write(Logger.Level.INFO, "|  |  Trace length: %d%n", traceToConcretize.length())
     logger.write(Logger.Level.DETAIL, "|  |  Trace: %s%n", traceToConcretize)
@@ -103,7 +139,7 @@ class XcfaSingleExprTraceRefiner<S : ExprState, A : ExprAction, P : Prec, R : Re
     logger.write(Logger.Level.SUBSTEP, "done, result: %s%n", cexStatus)
     assert(cexStatus.isFeasible() || cexStatus.isInfeasible()) { "Unknown CEX status" }
     return if (cexStatus.isFeasible()) {
-      RefinerResult.unsafe(traceToConcretize)
+      RefinerResult.unsafe(withInputs(traceToConcretize, cexStatus.asFeasible().valuations.states))
     } else {
       val refutation = cexStatus.asInfeasible().refutation
       logger.write(Logger.Level.DETAIL, "|  |  |  Refutation: %s%n", refutation)
@@ -159,7 +195,7 @@ class XcfaSingleExprTraceRefiner<S : ExprState, A : ExprAction, P : Prec, R : Re
           else -> throw UnsupportedOperationException("Unsupported pruning strategy")
         }
 
-        val refinedPrec = (prec as XcfaPrec<P>).copy()
+        val refinedPrec = (prec as XcfaPrec<P>).copy(noPop = prec.noPop.toMutableList())
         refinedPrec.noPop.add(state)
         RefinerResult.spurious(refinedPrec as P?)
       } ?: refinerResult

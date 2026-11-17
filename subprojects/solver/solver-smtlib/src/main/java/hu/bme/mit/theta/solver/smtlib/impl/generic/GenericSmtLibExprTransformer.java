@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -61,13 +61,16 @@ import hu.bme.mit.theta.core.type.fptype.FpAssignExpr;
 import hu.bme.mit.theta.core.type.fptype.FpDivExpr;
 import hu.bme.mit.theta.core.type.fptype.FpEqExpr;
 import hu.bme.mit.theta.core.type.fptype.FpFromBvExpr;
+import hu.bme.mit.theta.core.type.fptype.FpFromIeeeBvExpr;
 import hu.bme.mit.theta.core.type.fptype.FpGeqExpr;
 import hu.bme.mit.theta.core.type.fptype.FpGtExpr;
 import hu.bme.mit.theta.core.type.fptype.FpIsInfiniteExpr;
 import hu.bme.mit.theta.core.type.fptype.FpIsNanExpr;
+import hu.bme.mit.theta.core.type.fptype.FpIsZeroExpr;
 import hu.bme.mit.theta.core.type.fptype.FpLeqExpr;
 import hu.bme.mit.theta.core.type.fptype.FpLitExpr;
 import hu.bme.mit.theta.core.type.fptype.FpLtExpr;
+import hu.bme.mit.theta.core.type.fptype.FpMathFuncExpr;
 import hu.bme.mit.theta.core.type.fptype.FpMaxExpr;
 import hu.bme.mit.theta.core.type.fptype.FpMinExpr;
 import hu.bme.mit.theta.core.type.fptype.FpMulExpr;
@@ -81,6 +84,7 @@ import hu.bme.mit.theta.core.type.fptype.FpSqrtExpr;
 import hu.bme.mit.theta.core.type.fptype.FpSubExpr;
 import hu.bme.mit.theta.core.type.fptype.FpToBvExpr;
 import hu.bme.mit.theta.core.type.fptype.FpToFpExpr;
+import hu.bme.mit.theta.core.type.fptype.FpToIeeeBvExpr;
 import hu.bme.mit.theta.core.type.functype.FuncAppExpr;
 import hu.bme.mit.theta.core.type.functype.FuncLitExpr;
 import hu.bme.mit.theta.core.type.functype.FuncType;
@@ -99,6 +103,7 @@ import hu.bme.mit.theta.core.type.inttype.IntNeqExpr;
 import hu.bme.mit.theta.core.type.inttype.IntPosExpr;
 import hu.bme.mit.theta.core.type.inttype.IntRemExpr;
 import hu.bme.mit.theta.core.type.inttype.IntSubExpr;
+import hu.bme.mit.theta.core.type.inttype.IntToBvExpr;
 import hu.bme.mit.theta.core.type.inttype.IntToRatExpr;
 import hu.bme.mit.theta.core.type.rattype.RatAddExpr;
 import hu.bme.mit.theta.core.type.rattype.RatDivExpr;
@@ -204,6 +209,7 @@ public class GenericSmtLibExprTransformer implements SmtLibExprTransformer {
                 .addCase(IntLeqExpr.class, this::transformIntLeq)
                 .addCase(IntLtExpr.class, this::transformIntLt)
                 .addCase(IntToRatExpr.class, this::transformIntToRat)
+                .addCase(IntToBvExpr.class, this::transformIntToBv)
 
                 // Enums
 
@@ -271,11 +277,15 @@ public class GenericSmtLibExprTransformer implements SmtLibExprTransformer {
                 .addCase(FpMaxExpr.class, this::transformFpMax)
                 .addCase(FpMinExpr.class, this::transformFpMin)
                 .addCase(FpSqrtExpr.class, this::transformFpSqrt)
+                .addCase(FpMathFuncExpr.class, this::transformFpMathFunc)
                 .addCase(FpRemExpr.class, this::transformFpRem)
                 .addCase(FpIsNanExpr.class, this::transformFpIsNaN)
                 .addCase(FpIsInfiniteExpr.class, this::transformFpIsInfinite)
+                .addCase(FpIsZeroExpr.class, this::transformFpIsZero)
                 .addCase(FpFromBvExpr.class, this::transformFpFromBv)
                 .addCase(FpToBvExpr.class, this::transformFpToBv)
+                .addCase(FpFromIeeeBvExpr.class, this::transformFpFromIeeeBv)
+                .addCase(FpToIeeeBvExpr.class, this::transformFpToIeeeBv)
                 .addCase(FpToFpExpr.class, this::transformFpToFp)
 
                 // Functions
@@ -623,6 +633,10 @@ public class GenericSmtLibExprTransformer implements SmtLibExprTransformer {
         return String.format("(to_real %s)", toTerm(expr.getOp()));
     }
 
+    protected String transformIntToBv(final IntToBvExpr expr) {
+        return String.format("(int_to_bv %s)", toTerm(expr.getOp()));
+    }
+
     /*
      * Enums
      */
@@ -659,7 +673,17 @@ public class GenericSmtLibExprTransformer implements SmtLibExprTransformer {
     protected String transformBvConcat(final BvConcatExpr expr) {
         final String[] opTerms = expr.getOps().stream().map(this::toTerm).toArray(String[]::new);
 
-        return String.format("(concat %s)", String.join(" ", opTerms));
+        // SMT-LIB `concat` is a *binary* function (it is not declared `:left-assoc` like `bvand` /
+        // `bvadd`), so an n-ary BvConcatExpr must be nested into binary applications -- otherwise a
+        // strict solver (MathSAT, cvc5) rejects `(concat a b c d)` as "concat takes exactly 2
+        // arguments". Nesting left-associatively keeps the first operand the most significant,
+        // which
+        // is BvConcatExpr's own bit order.
+        String result = opTerms[0];
+        for (int i = 1; i < opTerms.length; i++) {
+            result = String.format("(concat %s %s)", result, opTerms[i]);
+        }
+        return result;
     }
 
     protected String transformBvExtract(final BvExtractExpr expr) {
@@ -1047,6 +1071,10 @@ public class GenericSmtLibExprTransformer implements SmtLibExprTransformer {
         return String.format("(fp.isInfinite %s)", toTerm(expr.getOp()));
     }
 
+    protected String transformFpIsZero(final FpIsZeroExpr expr) {
+        return String.format("(fp.isZero %s)", toTerm(expr.getOp()));
+    }
+
     protected String transformFpFromBv(final FpFromBvExpr expr) {
         if (expr.isSigned()) {
             return String.format(
@@ -1079,6 +1107,21 @@ public class GenericSmtLibExprTransformer implements SmtLibExprTransformer {
                     transformFpRoundingMode(expr.getRoundingMode()),
                     toTerm(expr.getOp()));
         }
+    }
+
+    protected String transformFpToIeeeBv(final FpToIeeeBvExpr expr) {
+        // fp.to_ieee_bv is a Z3-only, non-standard SMT-LIB extension; not available generically.
+        throw new UnsupportedOperationException(
+                "IEEE bit reinterpretation (fp.to_ieee_bv) is not available over generic SMT-LIB");
+    }
+
+    protected String transformFpFromIeeeBv(final FpFromIeeeBvExpr expr) {
+        // Standard SMT-LIB, unlike the other direction: every NaN pattern denotes the one NaN.
+        return String.format(
+                "((_ to_fp %d %d) %s)",
+                expr.getFpType().getExponent(),
+                expr.getFpType().getSignificand(),
+                toTerm(expr.getOp()));
     }
 
     protected String transformFpToFp(final FpToFpExpr expr) {
@@ -1188,12 +1231,26 @@ public class GenericSmtLibExprTransformer implements SmtLibExprTransformer {
         return running;
     }
 
+    private String transformFpMathFunc(final FpMathFuncExpr expr) {
+        final String funcSymbol = transformer.toSymbol(SmtLibMathFuncDecls.funcDecl(expr));
+        return "(%s %s)".formatted(funcSymbol, toTerm(expr.getOp()));
+    }
+
     private String transformDereference(final Dereference<?, ?, ?> expr) {
         checkState(
                 expr.getUniquenessIdx().isPresent(),
                 "Incomplete dereferences (missing uniquenessIdx) are not handled properly.");
-        return "(deref %s %s %s)"
+        // `deref` is a genuine uninterpreted function, but it has no ConstDecl in the expression
+        // for
+        // the solver to declare, so route it through a canonical per-signature function declaration
+        // (see SmtLibDereferenceDecls): `toSymbol` registers its `(declare-fun …)` exactly as for
+        // any
+        // other uninterpreted function, and the solver emits it with the assertion's other
+        // constants.
+        final String funcSymbol = transformer.toSymbol(SmtLibDereferenceDecls.funcDecl(expr));
+        return "(%s %s %s %s)"
                 .formatted(
+                        funcSymbol,
                         toTerm(expr.getArray()),
                         toTerm(expr.getOffset()),
                         toTerm(expr.getUniquenessIdx().get()));

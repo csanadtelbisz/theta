@@ -3,6 +3,7 @@ on:
   push:
   pull_request:
     types: [opened, synchronize, reopened]
+  merge_group:
   workflow_dispatch:
     inputs:
       message:
@@ -17,6 +18,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  check-release:
+    runs-on: ubuntu-24.04
+    outputs:
+      is-release: ${{ steps.check.outputs.is-release }}
+      message: ${{ steps.check.outputs.message }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+      - name: Determine if this is a release trigger
+        id: check
+        uses: ./.github/actions/check-release
+        with:
+          workflow-message: ${{ inputs.message }}
+          pr-title: ${{ github.event.pull_request.title }}
+          pr-body: ${{ github.event.pull_request.body }}
+
+
   build:
     runs-on: ubuntu-24.04
     steps:
@@ -65,6 +83,10 @@ jobs:
           - tool: EmergenTheta-svcomp
             config: "--svcomp --portfolio EMERGENT --loglevel RESULT"
             name: SV-COMP_Portfolio_Emergent
+            input_type: software
+          - tool: SymbolicTheta-svcomp
+            config: "--svcomp --portfolio SYMBOLIC --loglevel RESULT"
+            name: SV-COMP_Portfolio_Symbolic
             input_type: software
           - tool: Thorn-svcomp
             config: "--svcomp --portfolio HORN --loglevel RESULT"
@@ -133,6 +155,8 @@ jobs:
             gradleTask: buildArchiveTheta-svcomp
           - toolName: EmergenTheta-svcomp
             gradleTask: buildArchiveEmergenTheta-svcomp
+          - toolName: SymbolicTheta-svcomp
+            gradleTask: buildArchiveSymbolicTheta-svcomp
           - toolName: Thorn-svcomp
             gradleTask: buildArchiveThorn-svcomp
           - toolName: Theta-chccomp
@@ -171,8 +195,107 @@ jobs:
           if-no-files-found: error
 
 
+  canary-test:
+    needs: create-archives
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+      - name: Setup Java 21
+        uses: actions/setup-java@5ffc13f4174014e2d4d4572b3d74c3fa61aeb2c2 # v3.11.0
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v3.0.2
+        name: Get the Theta-svcomp archive
+        with:
+          name: release-Theta-svcomp
+          path: subprojects/xcfa/xcfa-cli/build/distributions/
+      # Only the files the two registries name: a full checkout is several GB, and the suite reads
+      # nothing else. `blob:none` keeps the clone metadata-only until the sparse paths are resolved.
+      - name: Fetch the referenced sv-benchmarks tasks
+        run: |
+          canaries=subprojects/xcfa/xcfa-cli/canaries/canaries.tsv
+          awk -F'\t' 'NR==1 { for (i = 1; i <= NF; i++) c[$i] = i; next }
+                      { print $c["input_file_relpath"]; print $c["property_file_relpath"] }' \
+            "$canaries" | sort -u > /tmp/sparse-paths
+          echo 'c/properties/*' >> /tmp/sparse-paths
+          git clone --filter=blob:none --no-checkout --depth 1 \
+            https://gitlab.com/sosy-lab/benchmarking/sv-benchmarks.git ../sv-benchmarks
+          cd ../sv-benchmarks
+          git sparse-checkout init --no-cone
+          git sparse-checkout set --stdin < /tmp/sparse-paths
+          git checkout
+      # The archive is already built above, so skip the task that would rebuild it; the suite
+      # unpacks the downloaded zip itself. Two invocations, so that failing fixtures do not skip the
+      # canaries (`canaryTest` depends on `fixtureTest`); the next step reports both.
+      - name: Run the canary and fixture suites
+        run: |
+          status=0
+          # The runner has 4 cores and a verdict fixture's portfolio uses more than one.
+          ./gradlew :theta-xcfa-cli:fixtureTest -x buildArchiveTheta-svcomp \
+            -Ptheta.fixture.jobs=2 || status=1
+          ./gradlew :theta-xcfa-cli:canaryTest -x buildArchiveTheta-svcomp -x fixtureTest \
+            -Ptheta.canary.jobs=2 || status=1
+          exit $status
+      - name: Report failing fixtures and canaries
+        if: failure()
+        shell: python3 {0}
+        run: |
+          import glob
+          import os
+          import re
+          import xml.etree.ElementTree as ET
+          failed = []
+          for suite in ("fixtureTest", "canaryTest"):
+              for path in sorted(glob.glob(f"subprojects/xcfa/xcfa-cli/build/test-results/{suite}/*.xml")):
+                  for case in ET.parse(path).getroot().iter("testcase"):
+                      problem = case.find("failure")
+                      if problem is None:
+                          problem = case.find("error")
+                      if problem is not None:
+                          # The summary line and the first diagnosis line, without the exception class.
+                          message = re.sub(r"^[\w.$]+: ", "", (problem.get("message") or "?").strip())
+                          reason = " / ".join(message.splitlines()[:2])
+                          failed.append(f"[{suite}] {case.get('name')}: {reason}")
+          if failed:
+              text = f"{len(failed)} failing fixtures/canaries\n" + "\n".join(failed)
+          else:
+              text = "the suites failed without a test failure; see the step log"
+          run_url = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          with open("canary-comment.md", "w") as comment:
+              comment.write(f"### :x: Canary suite failures ([run]({run_url}))\n\n```\n{text}\n```\n")
+          text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=Canary suite failures::{text}")
+      - name: Comment failures on the PR
+        if: failure() && github.event_name == 'pull_request'
+        uses: thollander/actions-comment-pull-request@dadb7667129e23f12ca3925c90dc5cd7121ab57e
+        continue-on-error: true
+        with:
+          comment_tag: 'canary-failures'
+          mode: 'recreate'
+          filePath: canary-comment.md
+      # Only rewrites an earlier failure comment, so that a fixed PR does not keep a stale list.
+      - name: Mark the PR comment as passing
+        if: success() && github.event_name == 'pull_request'
+        uses: thollander/actions-comment-pull-request@dadb7667129e23f12ca3925c90dc5cd7121ab57e
+        continue-on-error: true
+        with:
+          comment_tag: 'canary-failures'
+          create_if_not_exists: false
+          message: ':white_check_mark: Canary and fixture suites pass.'
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v3.1.2
+        with:
+          name: CanarySuiteReport
+          path: subprojects/xcfa/xcfa-cli/build/reports/tests/
+          if-no-files-found: ignore
+
+
   javadoc:
-    needs: build
+    needs: [build, check-release]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
@@ -187,7 +310,7 @@ jobs:
         with:
           arguments: javadoc
       - name: Deploy Javadoc
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.message != '' && github.ref == 'refs/heads/master'
+        if: needs.check-release.outputs.is-release == 'true'
         uses: JamesIves/github-pages-deploy-action@22a6ee251d6f13c6ab1ecb200d974f1a6feb1b8d # v4.4.2
         with:
           branch: gh-pages
@@ -233,7 +356,7 @@ jobs:
 
 
   deploy-release:
-    needs: [create-archives]
+    needs: [create-archives, check-release]
     runs-on: ubuntu-24.04
     steps:
       - name: Set java home to java 21
@@ -244,12 +367,12 @@ jobs:
       - name: Create release and deploy JARs
         uses: ./.github/actions/create-release
         with:
-          message: ${{ inputs.message }}
-          dry-run: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.message == '' || github.ref != 'refs/heads/master' }}
+          message: ${{ needs.check-release.outputs.message }}
+          dry-run: ${{ needs.check-release.outputs.is-release != 'true' }}
 
   deploy-zenodo:
-    needs: [create-archives]
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.message != '' && github.ref == 'refs/heads/master'
+    needs: [create-archives, check-release]
+    if: needs.check-release.outputs.is-release == 'true'
     runs-on: ubuntu-24.04
     strategy:
       matrix:
@@ -260,6 +383,8 @@ jobs:
           - tool: EmergenTheta
             artifact: EmergenTheta-svcomp
             record: 15536866
+          - tool: SymbolicTheta
+            artifact: SymbolicTheta-svcomp
           - tool: Thorn
             artifact: Thorn-svcomp
             record: 14194485
@@ -278,7 +403,7 @@ jobs:
           token: ${{ secrets.zenodo_token }}
 
   deploy-maven:
-    needs: test-linux
+    needs: [test-linux, check-release]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
@@ -289,7 +414,7 @@ jobs:
           distribution: temurin
           java-version: 21
       - name: Publish to Maven Central (Dry Run)
-        if: github.event_name != 'workflow_dispatch' || github.event.inputs.message == '' || github.ref != 'refs/heads/master'
+        if: needs.check-release.outputs.is-release != 'true'
         uses: ./.github/actions/cache-build
         env:
           PGP_KEY: ${{ secrets.PGP_KEY }}
@@ -297,17 +422,15 @@ jobs:
         with:
           arguments: publishToMavenLocal
       - name: Publish to Maven Central
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.message != '' && github.ref == 'refs/heads/master'
+        if: needs.check-release.outputs.is-release == 'true'
         uses: ./.github/actions/cache-build
         env:
           OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           OSSRH_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
-          OSSRH_TOKEN_USERNAME: ${{ secrets.OSSRH_TOKEN_USERNAME }}
-          OSSRH_TOKEN_PASSWORD: ${{ secrets.OSSRH_TOKEN_PASSWORD }}
           PGP_KEY: ${{ secrets.PGP_KEY }}
           PGP_PWD: ${{ secrets.PGP_PWD }}
         with:
-          arguments: publish
+          arguments: publishAggregationToCentralPortal
   
   test-docker:
     strategy:
@@ -350,7 +473,7 @@ jobs:
           push: false
   
   deploy-docker:
-    needs: [test-linux, test-docker]
+    needs: [test-linux, test-docker, check-release]
     strategy:
       matrix:
         dockerprojects: ["theta-cfa-cli", "theta-sts-cli", "theta-xsts-cli", "theta-xta-cli", "theta-xcfa-cli"]
@@ -368,28 +491,28 @@ jobs:
         run: |
           echo version=$(./gradlew properties --no-daemon --console=plain -q | grep "^version:" | awk '{printf $2}') >> $GITHUB_OUTPUT
       - name: docker-login
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.message != '' && github.ref == 'refs/heads/master'
+        if: needs.check-release.outputs.is-release == 'true'
         uses: ./.github/actions/docker-login
         with:
           username: ${{secrets.DOCKER_USERNAME}}
           token: ${{secrets.DOCKER_TOKEN}}
       - name: docker-login-ghcr
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.message != '' && github.ref == 'refs/heads/master'
+        if: needs.check-release.outputs.is-release == 'true'
         uses: ./.github/actions/docker-login
         with:
           registry: ghcr.io
           username: ${{github.repository_owner}}
           token: ${{secrets.GITHUB_TOKEN}}
-      - name: Build and publish docker file 
+      - name: Build and publish docker file
         uses: ./.github/actions/docker-deploy
         with:
           project: ${{ matrix.dockerprojects }}
           version: ${{ steps.version.outputs.version }}
           user-dockerhub: ftsrg
           user-ghcr: ftsrg
-          push: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.message != '' && github.ref == 'refs/heads/master' }}
+          push: ${{ needs.check-release.outputs.is-release == 'true' }}
       - name: Docker Hub Description update
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.message != '' && github.ref == 'refs/heads/master'
+        if: needs.check-release.outputs.is-release == 'true'
         uses: peter-evans/dockerhub-description@dc67fad7001ef9e8e3c124cb7a64e16d0a63d864
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
@@ -397,7 +520,11 @@ jobs:
           repository: ftsrg/${{ matrix.dockerprojects }}
 
   deploy-docs:
+    needs: [check-release]
     runs-on: ubuntu-24.04
+    # Only needs to push the built site to gh-pages; don't inherit the top-level write-all.
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
@@ -407,15 +534,16 @@ jobs:
           distribution: temurin
           java-version: 21
       - name: Install dependencies
+        # --only-binary forces pre-built wheels, so no package's setup.py runs during install.
         run: |
-          pip install --break-system-packages mkdocs mkdocs-material python-markdown-math mkdocs-awesome-pages-plugin
+          pip install --break-system-packages --only-binary :all: -r doc/wiki/requirements.txt
       - name: Build docs via Gradle
         uses: ./.github/actions/cache-build
         with:
           arguments: buildDocs
       - name: Deploy docs
+        if: needs.check-release.outputs.is-release == 'true'
         uses: JamesIves/github-pages-deploy-action@22a6ee251d6f13c6ab1ecb200d974f1a6feb1b8d # v4.4.2
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.message != '' && github.ref == 'refs/heads/master'
         with:
           branch: gh-pages
           folder: build/doc/wiki

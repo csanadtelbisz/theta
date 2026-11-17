@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -161,9 +161,18 @@ public final class FpExprs {
         return FpIsInfiniteExpr.of(op);
     }
 
+    public static FpIsZeroExpr IsZero(final Expr<FpType> op) {
+        return FpIsZeroExpr.of(op);
+    }
+
     public static FpRoundToIntegralExpr RoundToIntegral(
             final FpRoundingMode roundingMode, final Expr<FpType> op) {
         return FpRoundToIntegralExpr.of(roundingMode, op);
+    }
+
+    public static FpMathFuncExpr MathFunc(
+            final FpMathFuncExpr.Function function, final Expr<FpType> op) {
+        return FpMathFuncExpr.of(function, op);
     }
 
     public static FpSqrtExpr Sqrt(final FpRoundingMode roundingMode, final Expr<FpType> op) {
@@ -192,5 +201,13 @@ public final class FpExprs {
             final int exp,
             final int sig) {
         return FpToFpExpr.of(roundingMode, op, exp, sig);
+    }
+
+    public static FpToIeeeBvExpr ToIeeeBv(final Expr<FpType> op) {
+        return FpToIeeeBvExpr.of(op);
+    }
+
+    public static FpFromIeeeBvExpr FromIeeeBv(final Expr<BvType> op, final FpType fpType) {
+        return FpFromIeeeBvExpr.of(op, fpType);
     }
 }

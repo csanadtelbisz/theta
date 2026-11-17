@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -130,38 +130,31 @@ class XcfaCliParseTest {
     }
 
     @JvmStatic
-    fun dslFiles(): Stream<Arguments> {
-      return Stream.of(Arguments.of("/dsl/async.xcfa.kts"), Arguments.of("/dsl/sync.xcfa.kts"))
+    fun svLibFiles(): Stream<Arguments> {
+      return Stream.of(
+        Arguments.of("/svlib/annotated-loop-head.svlib"),
+        Arguments.of("/svlib/check-true-annotate-tag.svlib"),
+        Arguments.of("/svlib/check-true-middle.svlib"),
+        Arguments.of("/svlib/choice.svlib"),
+        Arguments.of("/svlib/goto.svlib"),
+        Arguments.of("/svlib/havoc.svlib"),
+        Arguments.of("/svlib/if-assign.svlib"),
+        Arguments.of("/svlib/if-simple-safe.svlib"),
+        Arguments.of("/svlib/if-simple-unsafe.svlib"),
+        Arguments.of("/svlib/loop-check-true-annotate-tag.svlib"),
+        Arguments.of("/svlib/loop-simple-safe.svlib"),
+        Arguments.of("/svlib/multi-assign.svlib"),
+        Arguments.of("/svlib/procedure-call.svlib"),
+        Arguments.of("/svlib/procedure-contracts.svlib"),
+        Arguments.of("/svlib/return.svlib"),
+        Arguments.of("/svlib/return-if.svlib"),
+        Arguments.of("/svlib/return-while.svlib"),
+      )
     }
 
     @JvmStatic
-    fun jsonFiles(): Stream<Arguments> {
-      return Stream.of(
-        Arguments.of("/json/00assignment.c.json"),
-        Arguments.of("/json/01cast.c.json"),
-        Arguments.of("/json/02types.c.json"),
-        Arguments.of("/json/03bitwise.c.json"),
-        Arguments.of("/json/04real.c.json"),
-        Arguments.of("/json/05math.c.json"),
-        Arguments.of("/json/06arrays.c.json"),
-        Arguments.of("/json/07arrayinit.c.json"),
-        Arguments.of("/json/08vararray.c.json"),
-        //                    Arguments.of("/json/09struct.c.json"),
-        //                    Arguments.of("/json/10ptr.c.json"),
-        //                    Arguments.of("/json/11ptrs.c.json"),
-        //                    Arguments.of("/json/12ptrtypes.c.json"),
-        Arguments.of("/json/13typedef.c.json"),
-        Arguments.of("/json/14ushort.c.json"),
-        Arguments.of("/json/15addition.c.json"),
-        Arguments.of("/json/16loop.c.json"),
-        Arguments.of("/json/17recursive.c.json"),
-        Arguments.of("/json/18multithread.c.json"),
-        Arguments.of("/json/19dportest.c.json"),
-        Arguments.of("/json/20testinline.c.json"),
-        Arguments.of("/json/21namecollision.c.json"),
-        Arguments.of("/json/22nondet.c.json"),
-        Arguments.of("/json/23overflow.c.json"),
-      )
+    fun dslFiles(): Stream<Arguments> {
+      return Stream.of(Arguments.of("/dsl/async.xcfa.kts"), Arguments.of("/dsl/sync.xcfa.kts"))
     }
   }
 
@@ -214,6 +207,23 @@ class XcfaCliParseTest {
   }
 
   @ParameterizedTest
+  @MethodSource("svLibFiles")
+  fun testSvLibParse(filePath: String) {
+    main(
+      arrayOf(
+        "--input-type",
+        "SVLIB",
+        "--input",
+        javaClass.getResource(filePath)!!.path,
+        "--backend",
+        "NONE",
+        "--stacktrace",
+        "--debug",
+      )
+    )
+  }
+
+  @ParameterizedTest
   @MethodSource("dslFiles")
   fun testDSLParse(filePath: String) {
     main(
@@ -228,59 +238,6 @@ class XcfaCliParseTest {
         "--debug",
       )
     )
-  }
-
-  @ParameterizedTest
-  @MethodSource("jsonFiles")
-  fun testJSONParse(filePath: String) {
-    main(
-      arrayOf(
-        "--input-type",
-        "JSON",
-        "--input",
-        javaClass.getResource(filePath)!!.path,
-        "--backend",
-        "NONE",
-        "--stacktrace",
-        "--debug",
-      )
-    )
-  }
-
-  @ParameterizedTest
-  @MethodSource("cFiles")
-  fun testJSONParseRoundTrip(filePath: String) {
-    val temp = createTempDirectory()
-    main(
-      arrayOf(
-        "--output",
-        "ALL",
-        "--input-type",
-        "C",
-        "--input",
-        javaClass.getResource(filePath)!!.path,
-        "--backend",
-        "NONE",
-        "--stacktrace",
-        "--output-directory",
-        temp.toAbsolutePath().toString(),
-        "--debug",
-      )
-    )
-    val xcfaJson = temp.resolve("xcfa.json").toFile()
-    main(
-      arrayOf(
-        "--input-type",
-        "JSON",
-        "--input",
-        xcfaJson.absolutePath.toString(),
-        "--backend",
-        "NONE",
-        "--stacktrace",
-        "--debug",
-      )
-    )
-    temp.toFile().deleteRecursively()
   }
 
   @ParameterizedTest

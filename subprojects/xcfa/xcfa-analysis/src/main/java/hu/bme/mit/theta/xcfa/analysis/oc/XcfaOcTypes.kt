@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -23,16 +23,39 @@ import hu.bme.mit.theta.core.type.Expr
 import hu.bme.mit.theta.core.type.LitExpr
 import hu.bme.mit.theta.core.type.abstracttype.AbstractExprs.Eq
 import hu.bme.mit.theta.core.type.booltype.BoolType
+import hu.bme.mit.theta.core.type.bvtype.BvAddExpr
+import hu.bme.mit.theta.core.type.bvtype.BvLitExpr
+import hu.bme.mit.theta.core.type.bvtype.BvType
+import hu.bme.mit.theta.core.type.inttype.IntAddExpr
+import hu.bme.mit.theta.core.type.inttype.IntLitExpr
+import hu.bme.mit.theta.core.utils.BvUtils
+import hu.bme.mit.theta.core.utils.ExprUtils
+import hu.bme.mit.theta.solver.SolverFactory
+import hu.bme.mit.theta.solver.javasmt.JavaSMTSolverFactory
+import hu.bme.mit.theta.xcfa.ErrorDetection
+import hu.bme.mit.theta.xcfa.ErrorDetection.DATA_RACE
+import hu.bme.mit.theta.xcfa.ErrorDetection.ERROR_LOCATION
+import hu.bme.mit.theta.xcfa.analysis.oc.XcfaOcMemoryConsistencyModel.SC
 import hu.bme.mit.theta.xcfa.model.XcfaEdge
+import java.math.BigInteger
+import org.sosy_lab.java_smt.SolverContextFactory.Solvers.Z3
 
 @Suppress("unused")
 enum class OcDecisionProcedureType(
-  internal val checker: (String, XcfaOcMemoryConsistencyModel) -> OcChecker<E>
+  internal val checker: (SolverFactory, XcfaOcMemoryConsistencyModel) -> OcChecker<E>,
+  internal val supportsProperty: (ErrorDetection, XcfaOcMemoryConsistencyModel) -> Boolean,
 ) {
 
-  IDL({ solver, mcm -> IDLOcChecker(solver, mcm == XcfaOcMemoryConsistencyModel.SC) }),
-  BASIC({ solver, _ -> BasicOcChecker(solver) }),
-  PROPAGATOR({ _, _ -> UserPropagatorOcChecker() }),
+  IDL(
+    { solver, mcm -> IDLOcChecker(solver, mcm == SC) },
+    { property, mcm -> property == ERROR_LOCATION || (property == DATA_RACE && mcm == SC) },
+  ),
+  BASIC({ solver, _ -> BasicOcChecker(solver) }, { property, _ -> property == ERROR_LOCATION }),
+  // The propagator API is implemented by JavaSMT; the CLI requires `Z3:new` for this procedure.
+  PROPAGATOR(
+    { _, _ -> UserPropagatorOcChecker(JavaSMTSolverFactory.create(Z3, arrayOf())) },
+    { property, _ -> property == ERROR_LOCATION },
+  ),
 }
 
 internal class XcfaEvent(
@@ -52,6 +75,25 @@ internal class XcfaEvent(
   private var arrayLit: LitExpr<*>? = null
   private var offsetLit: LitExpr<*>? = null
 
+  /**
+   * Over-approximated address values from [XcfaOcValueAnalysis]; null when anything is possible.
+   */
+  var arrayValues: Set<LitExpr<*>>? = null
+    set(value) {
+      field = value
+      if (value?.size == 1) arrayStatic = value.first()
+    }
+
+  var offsetValues: Set<LitExpr<*>>? = null
+    set(value) {
+      field = value
+      if (value?.size == 1) offsetStatic = value.first()
+    }
+
+  var inAtomicBlock: Boolean = false
+
+  var raceCandidate: Boolean = false
+
   init {
     check((array == null && offset == null) || (array != null && offset != null)) {
       "Array and offset expressions must be both null or both non-null."
@@ -69,7 +111,14 @@ internal class XcfaEvent(
 
     internal fun uniqueClkId(): Int = clkCnt++
 
-    internal var memoryGarbage: IndexedConstDecl<*>? = null
+    internal fun resetIds() {
+      idCnt = 0
+      clkCnt = 0
+      resetClkSize()
+    }
+
+    /** The unconstrained initial write of each memory partition (see `XcfaToEventGraph`). */
+    internal var memoryGarbages: Set<IndexedConstDecl<*>> = setOf()
   }
 
   // A (memory) event is only considered enabled if the array and offset expressions are also known
@@ -94,26 +143,59 @@ internal class XcfaEvent(
   override fun sameMemory(other: Event): Boolean {
     other as XcfaEvent
     if (!super.sameMemory(other)) return false
-    if (const == memoryGarbage || other.const == memoryGarbage) return true
+    // (the partition is already known to be the same: super compares the declarations)
+    if (const in memoryGarbages || other.const in memoryGarbages) return true
     if (arrayLit != other.arrayLit) return false
     if (offsetLit != other.offsetLit) return false
     return potentialSameMemory(other)
   }
 
-  fun potentialSameMemory(other: XcfaEvent): Boolean {
+  override fun potentialSameMemory(other: Event): Boolean {
+    other as XcfaEvent
     if (!super.sameMemory(other)) return false
-    if (const == memoryGarbage || other.const == memoryGarbage) return true
+    if (const in memoryGarbages || other.const in memoryGarbages) return true
     if (arrayStatic != null && other.arrayStatic != null && arrayStatic != other.arrayStatic)
       return false
     if (offsetStatic != null && other.offsetStatic != null && offsetStatic != other.offsetStatic)
       return false
-    return true
+    if (distinctDisplacements(other)) return false
+    return valuesMeet(other)
   }
+
+  // null also when the term reads a variable (see distinctDisplacements)
+  private val offsetSplit by lazy {
+    offset?.splitDisplacement()?.takeIf { (base, _) ->
+      base.all { ExprUtils.getVars(it).isEmpty() }
+    }
+  }
+
+  /**
+   * Whether the two addresses are the same term plus different constants, as the bytes of one
+   * object, or two members reached through one pointer, are. The term must be over constants only:
+   * an SSA constant has one value per execution, a variable may differ between the two events.
+   */
+  private fun distinctDisplacements(other: XcfaEvent): Boolean {
+    if (array == null || array != other.array) return false
+    val (base, displacement) = offsetSplit ?: return false
+    val (otherBase, otherDisplacement) = other.offsetSplit ?: return false
+    if (base != otherBase) return false
+    val difference = displacement - otherDisplacement
+    val type = offset!!.type
+    return if (type is BvType) difference.mod(BigInteger.TWO.pow(type.size)) != BigInteger.ZERO
+    else difference != BigInteger.ZERO
+  }
+
+  private fun valuesMeet(other: XcfaEvent): Boolean =
+    arrayValues.meets(other.arrayValues) && offsetValues.meets(other.offsetValues)
+
+  private fun Set<LitExpr<*>>?.meets(other: Set<LitExpr<*>>?): Boolean =
+    this == null || other == null || any { it in other }
 
   override fun interferenceCond(other: Event): Expr<BoolType>? {
     other as XcfaEvent
     array ?: return null
     other.array ?: return null
+    if (!valuesMeet(other)) return null
 
     var arrayEq: Expr<BoolType>? = Eq(array, other.array)
     if (arrayStatic != null && other.arrayStatic != null) {
@@ -150,3 +232,26 @@ internal val Reason.to: E
       is FromReadReason<*> -> (this as FromReadReason<E>).w
       else -> error("Unsupported reason type.")
     }
+
+/** [this] as a term plus a literal displacement (0 if there is none); null if it is a literal. */
+private fun Expr<*>.splitDisplacement(): Pair<List<Expr<*>>, BigInteger>? {
+  val ops =
+    when (this) {
+      is BvAddExpr -> this.ops
+      is IntAddExpr -> this.ops
+      is LitExpr<*> -> return null
+      else -> return Pair(listOf(this), BigInteger.ZERO)
+    }
+  val literals = ops.filterIsInstance<LitExpr<*>>()
+  val rest = ops.filter { it !is LitExpr<*> }
+  if (rest.isEmpty()) return null
+  val displacement =
+    literals.sumOf {
+      when (it) {
+        is BvLitExpr -> BvUtils.neutralBvLitExprToBigInteger(it)
+        is IntLitExpr -> it.value
+        else -> return null
+      }
+    }
+  return Pair(rest, displacement)
+}

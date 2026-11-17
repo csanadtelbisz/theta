@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ import hu.bme.mit.theta.xcfa.cli.params.Domain.*
 import hu.bme.mit.theta.xcfa.cli.runConfig
 import hu.bme.mit.theta.xcfa.model.XCFA
 import hu.bme.mit.theta.xcfa.utils.collectVars
+import hu.bme.mit.theta.xcfa.witnesses.hasInvariantChecks
 
 fun termination(
   xcfa: XCFA,
@@ -38,8 +39,8 @@ fun termination(
 ): STM {
   val checker = { config: XcfaConfig<*, *> -> runConfig(config, logger, uniqueLogger, true) }
 
-  val baseAsgCegarConfig = baseAsgCegarConfig(xcfa, mcm, parseContext, portfolioConfig, false)
-  val baseBoundedConfig = baseBoundedConfig(xcfa, mcm, parseContext, portfolioConfig, false)
+  val baseAsgCegarConfig = baseAsgCegarConfig(portfolioConfig)
+  val baseBoundedConfig = baseBoundedConfig(portfolioConfig)
 
   fun getStm(inProcess: Boolean): STM {
     val edges = LinkedHashSet<Edge>()
@@ -151,16 +152,32 @@ fun termination(
     }
 
     val (startingConfig: ConfigNode, endConfig: ConfigNode) =
-      if (xcfa.isInlined) {
+      if (xcfa.isInlined && xcfa.hasInvariantChecks) {
+        // Only the bounded engines check the invariants of a witness
+        val kind = kind(300_000, "Z3:4.13")
+        val imcCVC5 = imc(300_000, portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.0.8"))
+        val imcMathSAT =
+          imc(300_000, portfolioConfig.solverVersionOrLatestFallback("mathsat", "5.6.10"))
+        val kindMathSAT =
+          kind(300_000, portfolioConfig.solverVersionOrLatestFallback("mathsat", "5.6.10"))
+
+        kind then imcCVC5 then imcMathSAT then kindMathSAT
+
+        Pair(kind, kindMathSAT)
+      } else if (xcfa.isInlined) {
         if (types.any { it is BvType }) {
-          val expl = expl(100_000, "cvc5:1.0.8")
-          val predcart = predcart(100_000, "cvc5:1.0.8")
-          val predbool = predbool(100_000, "cvc5:1.0.8")
+          val expl = expl(100_000, portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.0.8"))
+          val predcart =
+            predcart(100_000, portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.0.8"))
+          val predbool =
+            predbool(100_000, portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.0.8"))
           val bmc = bmc(100_000, "Z3:4.13")
           val kind = kind(300_000, "Z3:4.13")
-          val imcCVC5 = imc(300_000, "cvc5:1.0.8")
-          val imcMathSAT = imc(300_000, "mathsat:5.6.10")
-          val kindMathSAT = kind(300_000, "mathsat:5.6.10")
+          val imcCVC5 = imc(300_000, portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.0.8"))
+          val imcMathSAT =
+            imc(300_000, portfolioConfig.solverVersionOrLatestFallback("mathsat", "5.6.10"))
+          val kindMathSAT =
+            kind(300_000, portfolioConfig.solverVersionOrLatestFallback("mathsat", "5.6.10"))
 
           expl then
             predcart then
@@ -173,14 +190,19 @@ fun termination(
 
           Pair(expl, kindMathSAT)
         } else if (types.any { it is FpType }) {
-          val expl = expl(100_000, "cvc5:1.0.8")
-          val predcart = predcart(100_000, "cvc5:1.0.8")
-          val predbool = predbool(100_000, "cvc5:1.0.8")
-          val bmcCVC5 = bmc(100_000, "cvc5:1.0.8")
-          val kindCVC5 = kind(300_000, "cvc5:1.0.8")
-          val imcCVC5 = imc(300_000, "cvc5:1.0.8")
-          val imcMathSAT = imc(300_000, "mathsat:5.6.10")
-          val kindMathSAT = kind(300_000, "mathsat:5.6.10")
+          val expl = expl(100_000, portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.0.8"))
+          val predcart =
+            predcart(100_000, portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.0.8"))
+          val predbool =
+            predbool(100_000, portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.0.8"))
+          val bmcCVC5 = bmc(100_000, portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.0.8"))
+          val kindCVC5 =
+            kind(300_000, portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.0.8"))
+          val imcCVC5 = imc(300_000, portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.0.8"))
+          val imcMathSAT =
+            imc(300_000, portfolioConfig.solverVersionOrLatestFallback("mathsat", "5.6.10"))
+          val kindMathSAT =
+            kind(300_000, portfolioConfig.solverVersionOrLatestFallback("mathsat", "5.6.10"))
 
           expl then
             predcart then
@@ -200,9 +222,11 @@ fun termination(
           val bmcLegacy = bmc(100_000, "Z3")
           val kind = kind(300_000, "Z3:4.13")
           val kindLegacy = kind(300_000, "Z3")
-          val imcCVC5 = imc(300_000, "cvc5:1.0.8")
-          val imcMathSAT = imc(300_000, "mathsat:5.6.10")
-          val kindMathSAT = kind(300_000, "mathsat:5.6.10")
+          val imcCVC5 = imc(300_000, portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.0.8"))
+          val imcMathSAT =
+            imc(300_000, portfolioConfig.solverVersionOrLatestFallback("mathsat", "5.6.10"))
+          val kindMathSAT =
+            kind(300_000, portfolioConfig.solverVersionOrLatestFallback("mathsat", "5.6.10"))
 
           (bmc or bmcLegacy) then
             (kind or kindLegacy).first() then
@@ -220,8 +244,9 @@ fun termination(
           val predbool = predbool(100_000, "Z3:4.13")
           val bmc = bmc(100_000, "Z3:4.13")
           val kind = kind(300_000, "Z3:4.13")
-          val imcCVC5 = imc(300_000, "cvc5:1.0.8")
-          val imcMathSAT = imc(300_000, "mathsat:5.6.10")
+          val imcCVC5 = imc(300_000, portfolioConfig.solverVersionOrLatestFallback("cvc5", "1.0.8"))
+          val imcMathSAT =
+            imc(300_000, portfolioConfig.solverVersionOrLatestFallback("mathsat", "5.6.10"))
           val imc = kind(300_000, "Z3")
 
           expl then predcart then predbool then bmc then kind then imcCVC5 then imcMathSAT then imc
@@ -229,7 +254,12 @@ fun termination(
           Pair(expl, imc)
         }
       } else {
-        error("Only single-procedure or inlineable programs are supported right now.")
+        // The bounded engines need a single procedure; the ASG abstraction keeps the call stack
+        // in its state, so it can still decide recursion whose depth stays bounded.
+        val expl = expl(300_000, "Z3:4.13")
+        val predcart = predcart(300_000, "Z3:4.13")
+        expl then predcart
+        Pair(expl, predcart)
       }
 
     return STM(startingConfig, edges)

@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package hu.bme.mit.theta.frontend.transformation.model.types.complex.real;
 import hu.bme.mit.theta.frontend.ParseContext;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.CComplexType;
 import hu.bme.mit.theta.frontend.transformation.model.types.simple.CSimpleType;
+import java.util.Objects;
 
 public abstract class CReal extends CComplexType {
 
@@ -33,8 +34,10 @@ public abstract class CReal extends CComplexType {
 
     @Override
     public int width() {
-        return parseContext.getArchitecture().getBitWidth(getTypeName() + "_s")
-                + parseContext.getArchitecture().getBitWidth(getTypeName() + "_e");
+        // the architecture's keys are spelled without spaces (`longdouble`), the type name is C
+        String key = getTypeName().replace(" ", "");
+        return parseContext.getArchitecture().getBitWidth(key + "_s")
+                + parseContext.getArchitecture().getBitWidth(key + "_e");
     }
 
     @Override
@@ -44,5 +47,16 @@ public abstract class CReal extends CComplexType {
         } else {
             return type.getSmallestCommonType(this);
         }
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (o == null || getClass() != o.getClass()) return false;
+        return true;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(getClass());
     }
 }

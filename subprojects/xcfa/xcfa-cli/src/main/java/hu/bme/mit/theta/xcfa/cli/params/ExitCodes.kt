@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@ enum class ExitCodes(val code: Int) {
   INVALID_PARAM(211),
   VERIFICATION_STUCK(220),
   SOLVER_ERROR(221),
+  UNRELIABLE_UNSAFE(222),
 }
 
 data class ErrorCodeException(val code: Int) : Exception()
@@ -57,6 +58,26 @@ private fun Throwable.printCauseAndTrace(stacktrace: Boolean) {
   val location = stackTrace.first { it.className.startsWith("hu.bme.mit.theta") }.toString()
   System.err.println("Process failed! ($location, $this)")
 }
+
+/**
+ * Whether [this] is a solver failure, possibly wrapped, or was thrown inside a solver integration.
+ * Such failures are specific to the solver, so a portfolio may retry the same step on another one.
+ */
+private fun Throwable.isSolverFailure(): Boolean =
+  generateSequence(this) { it.cause }
+    .take(16)
+    .any { e ->
+      e is SmtLibSolverException ||
+        e is JavaSMTSolverException ||
+        e is SolverValidationException ||
+        e is UnknownSolverStatusException ||
+        e is Z3Exception ||
+        e is com.microsoft.z3legacy.Z3Exception ||
+        e.stackTrace
+          .firstOrNull { it.className.startsWith("hu.bme.mit.theta.") }
+          ?.className
+          ?.startsWith("hu.bme.mit.theta.solver.") == true
+    }
 
 fun <T> exitOnError(stacktrace: Boolean, throwDontExit: Boolean, body: () -> T): T {
   try {
@@ -98,7 +119,11 @@ fun <T> exitOnError(stacktrace: Boolean, throwDontExit: Boolean, body: () -> T):
     exitProcess(throwDontExit, e, ExitCodes.SOLVER_ERROR.code)
   } catch (e: RuntimeException) {
     e.printCauseAndTrace(stacktrace)
-    if (e.message?.contains("Solver problem") == true || e.message?.contains("z3") == true) {
+    if (
+      e.isSolverFailure() ||
+        e.message?.contains("Solver problem") == true ||
+        e.message?.contains("z3") == true
+    ) {
       exitProcess(throwDontExit, e, ExitCodes.SOLVER_ERROR.code)
     } else {
       exitProcess(throwDontExit, e, ExitCodes.SERVER_ERROR.code)

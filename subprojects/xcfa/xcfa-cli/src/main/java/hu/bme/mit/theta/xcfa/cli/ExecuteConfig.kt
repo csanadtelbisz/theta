@@ -15,7 +15,6 @@
  */
 package hu.bme.mit.theta.xcfa.cli
 
-import com.google.common.base.Stopwatch
 import hu.bme.mit.theta.analysis.Cex
 import hu.bme.mit.theta.analysis.EmptyCex
 import hu.bme.mit.theta.analysis.Trace
@@ -33,33 +32,45 @@ import hu.bme.mit.theta.analysis.ptr.PtrPrec
 import hu.bme.mit.theta.analysis.ptr.PtrState
 import hu.bme.mit.theta.cat.dsl.CatDslManager
 import hu.bme.mit.theta.common.logging.Logger
-import hu.bme.mit.theta.common.logging.Logger.Level.*
 import hu.bme.mit.theta.common.logging.Logger.Level.INFO
+import hu.bme.mit.theta.common.stopwatch.Stopwatch
 import hu.bme.mit.theta.common.visualization.writer.WebDebuggerLogger
 import hu.bme.mit.theta.frontend.ParseContext
+import hu.bme.mit.theta.frontend.RequiresByteAddressedMemoryException
+import hu.bme.mit.theta.frontend.transformation.ArchitectureConfig
 import hu.bme.mit.theta.graphsolver.patterns.constraints.MCM
 import hu.bme.mit.theta.xcfa.ErrorDetection
 import hu.bme.mit.theta.xcfa.analysis.*
 import hu.bme.mit.theta.xcfa.analysis.oc.OcDecisionProcedureType
-import hu.bme.mit.theta.xcfa.analysis.por.XcfaDporLts
-import hu.bme.mit.theta.xcfa.analysis.por.XcfaSporLts
 import hu.bme.mit.theta.xcfa.cli.checkers.getChecker
 import hu.bme.mit.theta.xcfa.cli.checkers.getSafetyChecker
 import hu.bme.mit.theta.xcfa.cli.params.*
 import hu.bme.mit.theta.xcfa.cli.params.OutputLevel.NONE
+import hu.bme.mit.theta.xcfa.cli.utils.PrecReuse
+import hu.bme.mit.theta.xcfa.cli.utils.PrecSerializationMode
 import hu.bme.mit.theta.xcfa.cli.utils.determineProperty
 import hu.bme.mit.theta.xcfa.cli.utils.getSolver
 import hu.bme.mit.theta.xcfa.cli.utils.getXcfa
 import hu.bme.mit.theta.xcfa.cli.utils.registerAllSolverManagers
+import hu.bme.mit.theta.xcfa.cli.utils.unsafeDependsOnOverApproximation
+import hu.bme.mit.theta.xcfa.cli.utils.xcfaTraits
 import hu.bme.mit.theta.xcfa.cli.witnesstransformation.Btor2XcfaTraceConcretizer
 import hu.bme.mit.theta.xcfa.cli.witnesstransformation.XcfaTraceConcretizer
 import hu.bme.mit.theta.xcfa.model.XCFA
-import hu.bme.mit.theta.xcfa.model.xcfa
 import hu.bme.mit.theta.xcfa.passes.*
+import hu.bme.mit.theta.xcfa.passes.loops.SpinLoopEffectPass
+import hu.bme.mit.theta.xcfa.passes.loops.UnrollPass
+import hu.bme.mit.theta.xcfa.passes.memory.DereferenceToArrayPass
+import hu.bme.mit.theta.xcfa.passes.memory.FetchExecuteWriteback
+import hu.bme.mit.theta.xcfa.passes.memory.MallocFunctionPass
+import hu.bme.mit.theta.xcfa.passes.memory.PtrSizeToMemoryPass
+import hu.bme.mit.theta.xcfa.passes.memory.ReferenceElimination
+import hu.bme.mit.theta.xcfa.passes.memory.UnsupportedPointerSplitException
+import hu.bme.mit.theta.xcfa.passes.property.DataRaceToReachabilityPass
+import hu.bme.mit.theta.xcfa.passes.structure.LbePass
+import hu.bme.mit.theta.xcfa.passes.structure.StaticCoiPass
 import hu.bme.mit.theta.xcfa.utils.collectVars
 import hu.bme.mit.theta.xcfa.utils.isDataRacePossible
-import java.util.concurrent.TimeUnit
-import kotlin.random.Random
 
 fun runConfig(
   config: XcfaConfig<*, *>,
@@ -74,7 +85,7 @@ fun runConfig(
   val (xcfa, mcm, parseContext) =
     parseInputFiles(config, logger, uniqueLogger) // this handles pre-analysis logging as well
 
-  validateInputOptions(config, logger, uniqueLogger)
+  validateInputOptions(config, parseContext, logger, uniqueLogger)
 
   val result = backend(xcfa, mcm, parseContext, config, logger, uniqueLogger, throwDontExit)
 
@@ -86,52 +97,66 @@ fun runConfig(
 private fun propagateInputOptions(config: XcfaConfig<*, *>, logger: Logger, uniqueLogger: Logger) {
   config.inputConfig.property = determineProperty(config, logger)
   LbePass.defaultLevel = config.frontendConfig.lbeLevel
+  DereferenceToArrayPass.zeroInitialized =
+    when (config.frontendConfig.memoryInit) {
+      MemoryInit.ZERO -> true
+      MemoryInit.UNCONSTRAINED -> false
+      MemoryInit.AUTO ->
+        config.backendConfig.backend == Backend.MDD &&
+          (config.backendConfig.specConfig as? MddConfig)?.symbolicValues != true
+    }
   StaticCoiPass.enabled = config.frontendConfig.enableStaticCoi
+  check(!config.frontendConfig.ptrSizeInMemory || config.backendConfig.backend == Backend.OC) {
+    "--ptr-size-in-memory requires the OC backend"
+  }
+  PtrSizeToMemoryPass.enabled = config.frontendConfig.ptrSizeInMemory
+  PtrSizeToMemoryPass.mutexesEnabled = config.backendConfig.backend == Backend.OC
   DataRaceToReachabilityPass.enabled = config.frontendConfig.enableDataRaceToReachability
 
   if (config.backendConfig.backend == Backend.CEGAR) {
     val cegarConfig = config.backendConfig.specConfig
     cegarConfig as CegarConfig
-    val random = Random(cegarConfig.porSeed)
-    XcfaSporLts.random = random
-    XcfaDporLts.random = random
   }
   if (config.backendConfig.backend == Backend.REFINERY) {
     MallocFunctionPass.enabled = false
     ReferenceElimination.useMemoryAllocationExpression = true
   }
-  if (config.inputConfig.property.inputProperty != ErrorDetection.ERROR_LOCATION) {
-    RemoveDeadEnds.enabled = false
-  }
-  if (config.backendConfig.backend == Backend.PATH_ENUMERATION) {
-    val pathEnumerationConfig = config.backendConfig.specConfig
-    pathEnumerationConfig as PathEnumerationConfig
-    val random = Random(pathEnumerationConfig.porRandomSeed)
-    XcfaSporLts.random = random
-    XcfaDporLts.random = random
-  }
-  if (
-    config.inputConfig.property.inputProperty == ErrorDetection.MEMSAFETY ||
-      config.inputConfig.property.inputProperty == ErrorDetection.MEMCLEANUP
-  ) {
-    MemsafetyPass.enabled = true
-  }
-  if (config.inputConfig.property.inputProperty == ErrorDetection.DATA_RACE) {
-    StaticCoiPass.enabled = false
-    UnusedVarPass.keepGlobalVariableAccesses = true
-  }
   if (config.debugConfig.argToFile) {
     WebDebuggerLogger.enableWebDebuggerLogger()
     WebDebuggerLogger.getInstance().setTitle(config.inputConfig.input?.name)
   }
+  (config.backendConfig.specConfig as? CegarConfig)?.let { cegarConfig ->
+    if (
+      cegarConfig.initPrec == InitPrec.REUSE ||
+        config.outputConfig.precOutputConfig.serializationMode != PrecSerializationMode.NEVER
+    ) {
+      PrecReuse.setDomain(cegarConfig.abstractorConfig.domain)
+    }
+  }
 
-  LoopUnrollPass.UNROLL_LIMIT = config.frontendConfig.loopUnroll
-  LoopUnrollPass.FORCE_UNROLL_LIMIT = config.frontendConfig.forceUnroll
+  // the loop heads of a termination witness must remain
+  UnrollPass.UNROLL_LIMIT =
+    if (config.inputConfig.property.isTerminationWitnessValidation) 0
+    else config.frontendConfig.loopUnroll
+  UnrollPass.FORCE_UNROLL_LIMIT =
+    if (config.inputConfig.witness == null) config.frontendConfig.forceUnroll else -1
+  UnrollPass.UNROLL_RECURSION_LIMIT =
+    if (config.inputConfig.witness == null) config.frontendConfig.forceUnrollRecursion else -1
+  UnrollPass.COLLAPSE_BUSY_WAITS =
+    config.inputConfig.property.verifiedProperty != ErrorDetection.TERMINATION
+  UnrollPass.BUSY_WAITS_IGNORE_DEAD_STORES =
+    config.inputConfig.property.inputProperty == ErrorDetection.ERROR_LOCATION
+  SpinLoopEffectPass.ENABLED = !config.frontendConfig.disableSpinLoopEffects
   FetchExecuteWriteback.enabled = config.frontendConfig.enableFew
   ARGWebDebugger.on = config.debugConfig.argdebug
 }
 
-private fun validateInputOptions(config: XcfaConfig<*, *>, logger: Logger, uniqueLogger: Logger) {
+private fun validateInputOptions(
+  config: XcfaConfig<*, *>,
+  parseContext: ParseContext?,
+  logger: Logger,
+  uniqueLogger: Logger,
+) {
   rule("NoLbeFullWhenCegar") {
     config.backendConfig.backend == Backend.CEGAR &&
       (config.frontendConfig.lbeLevel == LbePass.LbeLevel.LBE_FULL ||
@@ -167,11 +192,33 @@ private fun validateInputOptions(config: XcfaConfig<*, *>, logger: Logger, uniqu
   rule("NoPredSplitUntilFixed(https://github.com/ftsrg/theta/issues/267)") {
     (config.backendConfig.specConfig as? CegarConfig)?.abstractorConfig?.domain == Domain.PRED_SPLIT
   }
+  rule("OcDataRaceNeedsNoLbe") {
+    // the OC checker detects races between atomic units, which LBE would merge statements into
+    config.backendConfig.backend == Backend.OC &&
+      config.inputConfig.property.verifiedProperty == ErrorDetection.DATA_RACE &&
+      config.frontendConfig.lbeLevel != LbePass.LbeLevel.NO_LBE
+  }
   rule("OcPropagatorWithoutZ3") {
     config.backendConfig.backend == Backend.OC &&
       (config.backendConfig.specConfig as? OcConfig)?.decisionProcedure ==
         OcDecisionProcedureType.PROPAGATOR &&
       (config.backendConfig.specConfig as? OcConfig)?.smtSolver != "Z3:new"
+  }
+  rule("OcPropagatorNotValidated") {
+    // the propagator procedure builds its own solver, which the validator cannot wrap
+    val ocConfig = config.backendConfig.specConfig as? OcConfig
+    config.backendConfig.backend == Backend.OC &&
+      ocConfig?.decisionProcedure == OcDecisionProcedureType.PROPAGATOR &&
+      (ocConfig.validateSolver || ocConfig.unsatReferenceSolver.isNotEmpty())
+  }
+  rule("NoSignedWraparoundWithOverflowCheck") {
+    // Modeling signed overflow as wraparound makes overflow detection vacuous.
+    (config.frontendConfig.specConfig as? CFrontendConfig)?.enableSignedWraparound == true &&
+      config.inputConfig.property.inputProperty == ErrorDetection.OVERFLOW
+  }
+  rule("NoBlockEncodingWhenMultithreaded") {
+    (config.backendConfig.specConfig as? BoundedConfig)?.blockEncoding == true &&
+      parseContext?.multiThreading == true
   }
   rule("SensibleOutputOptions", false) {
     config.outputConfig.enabled == NONE &&
@@ -188,7 +235,7 @@ private fun parseInputFiles(
   logger: Logger,
   uniqueLogger: Logger,
 ): Triple<XCFA?, MCM?, ParseContext?> =
-  if (config.backendConfig.inProcess && config.backendConfig.parseInProcess) {
+  if (config.backendConfig.inProcess) {
     logger.info("Not parsing input because a worker process will handle it later.")
     Triple(null, null, null)
   } else {
@@ -198,6 +245,27 @@ private fun parseInputFiles(
     Triple(xcfa, mcm, parseContext)
   }
 
+/**
+ * Builds the XCFA (plus MCM and parse context) for the configured input.
+ *
+ * The default `multi` memory model splits a pointer into a base and an offset channel, and there
+ * are local-variable patterns its splitting machinery cannot represent -- those make the frontend
+ * throw [UnsupportedPointerSplitException]. The frontend then retries under `flat`, and if that
+ * needs byte granularity too, under `bytes`.
+ *
+ * A union punned through members of different widths is the mirror image: the cell models must lay
+ * it out as bytes by hand and run out of room (a pointer cannot cover several cells, a member whose
+ * bytes must be recombined has no cell to read from), which is
+ * [RequiresByteAddressedMemoryException]. `bytes` gives every object a run of byte cells and has
+ * none of those limits, so that failure is retried there. `bytes` is only defined over bitvectors,
+ * so the arithmetic moves with it. A *floating-point* member is excluded at the raise site: the
+ * byte-addressed model refuses floats too, so retrying would only swap one refusal for another.
+ *
+ * Both fallbacks are deliberately restricted to the *default* model: an explicit `--memory-model`
+ * is the user's decision, and is never overridden -- not even when it names the same `multi` we
+ * would otherwise have replaced. Likewise an explicit `--arithmetic integer` blocks the bytes retry
+ * rather than being overridden, because the model it would land in cannot be built over integers.
+ */
 private fun frontend(
   config: XcfaConfig<*, *>,
   logger: Logger,
@@ -207,10 +275,97 @@ private fun frontend(
     return config.inputConfig.xcfaWCtx!!
   }
 
+  // The passes transform the property while building the model (e.g., overflow to error location).
+  // A property inherited from an earlier build (a portfolio step's serialized config) must not
+  // carry that transformation into this one, or passes keyed on it misbehave.
+  config.inputConfig.property = config.inputConfig.property.untransformed()
+
+  val cConfig = config.frontendConfig.specConfig as? CFrontendConfig
+  val mayFallBackToFlat =
+    config.frontendConfig.inputType == InputType.C && cConfig != null && cConfig.memoryModel == null
+
+  val mayFallBackToBytes =
+    config.frontendConfig.inputType == InputType.C &&
+      cConfig != null &&
+      cConfig.memoryModel == null &&
+      cConfig.arithmetic != ArchitectureConfig.ArithmeticType.integer
+
+  return try {
+    buildFrontend(config, logger, uniqueLogger, mayFallBackToFlat, mayFallBackToBytes)
+  } catch (e: RequiresByteAddressedMemoryException) {
+    logger.write(
+      Logger.Level.RESULT,
+      "%s%n",
+      "note: frontend build failed on a construct the cell-per-value models cannot express under" +
+        " --memory-model ${cConfig!!.effectiveMemoryModel}; retrying with --memory-model bytes",
+    )
+    logger.info("%s", "Byte-granularity limitation was: ${e.message}")
+    // Pinned for everything downstream, exactly as the flat fallback pins its model: the portfolio
+    // re-runs the frontend once per configuration it tries, and they must all agree with the XCFA
+    // returned here. The arithmetic is pinned with it because `bytes` has no integer encoding.
+    cConfig.memoryModel = ArchitectureConfig.MemoryModelType.bytes
+    cConfig.arithmetic = ArchitectureConfig.ArithmeticType.bitvector
+    // No fallback left to offer: whatever this attempt throws is reported as a real failure.
+    buildFrontend(
+      config,
+      logger,
+      uniqueLogger,
+      allowFlatFallback = false,
+      allowBytesFallback = false,
+    )
+  } catch (e: UnsupportedPointerSplitException) {
+    logger.info("%s", "Pointer-splitting limitation was: ${e.message}")
+    val cFrontendConfig = checkNotNull(cConfig)
+    logger.write(
+      Logger.Level.RESULT,
+      "%s%n",
+      "note: frontend build failed due to a pointer-splitting limitation under --memory-model" +
+        " ${cFrontendConfig.effectiveMemoryModel}; retrying with --memory-model flat",
+    )
+    // Pin the model for everything downstream too: the portfolio re-runs the frontend once per
+    // configuration it tries (in-process runs re-parse from this very config), and they must all
+    // agree with the XCFA we return here.
+    cFrontendConfig.memoryModel = ArchitectureConfig.MemoryModelType.flat
+    try {
+      buildFrontend(
+        config,
+        logger,
+        uniqueLogger,
+        allowFlatFallback = false,
+        allowBytesFallback = mayFallBackToBytes,
+      )
+    } catch (flatException: RequiresByteAddressedMemoryException) {
+      logger.write(
+        Logger.Level.RESULT,
+        "%s%n",
+        "note: flat memory cannot represent this construct; retrying with --memory-model bytes",
+      )
+      logger.info("%s", "Byte-granularity limitation was: ${flatException.message}")
+      cFrontendConfig.memoryModel = ArchitectureConfig.MemoryModelType.bytes
+      cFrontendConfig.arithmetic = ArchitectureConfig.ArithmeticType.bitvector
+      // No fallback left to offer: whatever this attempt throws is reported as a real failure.
+      buildFrontend(
+        config,
+        logger,
+        uniqueLogger,
+        allowFlatFallback = false,
+        allowBytesFallback = false,
+      )
+    }
+  }
+}
+
+private fun buildFrontend(
+  config: XcfaConfig<*, *>,
+  logger: Logger,
+  uniqueLogger: Logger,
+  allowFlatFallback: Boolean,
+  allowBytesFallback: Boolean,
+): Triple<XCFA, MCM, ParseContext> {
   val stopwatch = Stopwatch.createStarted()
 
   val input = config.inputConfig.input!!
-  logger.info("Parsing the input $input as ${config.frontendConfig.inputType}")
+  logger.info("%s", "Parsing the input $input as ${config.frontendConfig.inputType}")
 
   val parseContext = ParseContext()
 
@@ -219,15 +374,41 @@ private fun frontend(
     cConfig as CFrontendConfig
     parseContext.arithmetic = cConfig.arithmetic
     parseContext.architecture = cConfig.architecture
+    parseContext.signedWraparound = cConfig.enableSignedWraparound
+    // Yices divides integers only by constants
+    parseContext.isConstantIntDivisorsOnly =
+      (config.backendConfig.specConfig?.solverNames().orEmpty() +
+          config.outputConfig.witnessConfig.concretizerSolver)
+        .any { it.contains("yices", ignoreCase = true) }
+    parseContext.memoryModel = cConfig.effectiveMemoryModel
+    if (parseContext.memoryModel == ArchitectureConfig.MemoryModelType.bytes) {
+      // Byte cells split and recombine values, which only bitvectors express; over integers a wide
+      // access is one unsplit cell, so an overrun past its first byte goes unchecked.
+      check(cConfig.arithmetic != ArchitectureConfig.ArithmeticType.integer) {
+        "--memory-model bytes requires bitvector arithmetic, not --arithmetic integer"
+      }
+      cConfig.arithmetic = ArchitectureConfig.ArithmeticType.bitvector
+      parseContext.arithmetic = cConfig.arithmetic
+    }
+    parseContext.isCheckMemsafety =
+      config.inputConfig.property.inputProperty == ErrorDetection.MEMSAFETY ||
+        config.inputConfig.property.inputProperty == ErrorDetection.MEMCLEANUP
+    parseContext.isCheckDataRace =
+      config.inputConfig.property.inputProperty == ErrorDetection.DATA_RACE
   }
 
-  val xcfa = getXcfa(config, parseContext, logger, uniqueLogger)
+  val xcfa =
+    getXcfa(config, parseContext, logger, uniqueLogger, allowFlatFallback, allowBytesFallback)
   val mcm =
     if (config.inputConfig.catFile != null) {
       CatDslManager.createMCM(config.inputConfig.catFile!!)
     } else {
       emptySet()
     }
+  (config.backendConfig.specConfig as? CegarConfig)?.let { cegarConfig ->
+    if (cegarConfig.initPrec == InitPrec.REUSE)
+      PrecReuse.load(cegarConfig.precFile, xcfa.collectVars(), parseContext, logger)
+  }
 
   if (
     parseContext.multiThreading &&
@@ -240,13 +421,22 @@ private fun frontend(
     uniqueLogger.write(INFO, "Multithreaded program found, using DFS instead of ERR.")
   }
 
-  logger.benchmark(
-    "Frontend finished: ${xcfa.name}  (in ${stopwatch.elapsed(TimeUnit.MILLISECONDS)} ms)"
-  )
+  logger.benchmark("%s", "Frontend finished: ${xcfa.name}  (in ${stopwatch.elapsedMillis()} ms)")
 
   logger.benchmark("ParsingResult Success")
   logger.benchmark(
-    "Alias graph size: ${xcfa.pointsToGraph.size} -> ${xcfa.pointsToGraph.values.map { it.size }.toList()}"
+    "%s",
+    "Alias graph size: ${xcfa.pointsToGraph.size} -> ${xcfa.pointsToGraph.values.map { it.size }.toList()}",
+  )
+  logger.benchmark(
+    "%s",
+    "XCFA-TRAITS " +
+      xcfaTraits(
+        xcfa,
+        parseContext,
+        config.inputConfig.property.verifiedProperty.name,
+        config.inputConfig.propertyFile?.name ?: "-",
+      ),
   )
 
   return Triple(xcfa, mcm, parseContext)
@@ -269,56 +459,79 @@ private fun backend(
     } else if (config.backendConfig.backend == Backend.TRACEGEN) {
       tracegenBackend(xcfa, mcm, parseContext, config, logger, uniqueLogger, throwDontExit)
     } else {
+      logger.info(
+        "Input/Verified property: ${config.inputConfig.property.inputProperty.name} / ${config.inputConfig.property.verifiedProperty.name}"
+      )
+
       // we would not do post analysis logging if running in a portfolio otherwise
-      if (
+      when {
         config.inputConfig.property.verifiedProperty == ErrorDetection.ERROR_LOCATION &&
           (xcfa?.procedures?.all { it.errorLoc.isEmpty } ?: false) &&
-          !portfolioRun
-      ) {
-        val result = SafetyResult.safe<EmptyProof, EmptyCex>(EmptyProof.getInstance())
-        logger.result("Input is trivially safe: no path leads to the error location.")
-        result
-      } else if (
+          !portfolioRun -> {
+          logger.result("Input is trivially safe: no path leads to the error location.")
+          SafetyResult.safe<EmptyProof, EmptyCex>(EmptyProof.getInstance())
+        }
+
         config.inputConfig.property.verifiedProperty == ErrorDetection.DATA_RACE &&
           xcfa != null &&
           !isDataRacePossible(xcfa, logger) &&
-          !portfolioRun
-      ) {
-        val result = SafetyResult.safe<EmptyProof, EmptyCex>(EmptyProof.getInstance())
-        logger.result(
-          "Input is trivially safe: potential concurrent accesses to the same memory locations are either all atomic or all read accesses."
-        )
-        result
-      } else {
-        val stopwatch = Stopwatch.createStarted()
-        val checker = getSafetyChecker(xcfa, mcm, config, parseContext, logger, uniqueLogger)
+          !portfolioRun -> {
+          logger.result(
+            "Input is trivially safe: potential concurrent accesses to the same memory locations are either all atomic or all read accesses."
+          )
+          SafetyResult.safe<EmptyProof, EmptyCex>(EmptyProof.getInstance())
+        }
 
-        logger.info(
-          "Input/Verified property: ${config.inputConfig.property.inputProperty.name} / ${config.inputConfig.property.verifiedProperty.name}"
-        )
+        else -> {
+          val stopwatch = Stopwatch.createStarted()
+          val checker = getSafetyChecker(xcfa, mcm, config, parseContext, logger, uniqueLogger)
 
-        logger.info(
-          "Starting verification of ${if (xcfa?.name == "") "UnnamedXcfa" else (xcfa?.name ?: "DeferredXcfa")} using ${config.backendConfig.backend}\n${config}"
-        )
+          logger.info(
+            "%s",
+            "Input/Verified property: ${config.inputConfig.property.inputProperty.name} / ${config.inputConfig.property.verifiedProperty.name}",
+          )
 
-        val result =
-          exitOnError(config.debugConfig.stacktrace, config.debugConfig.debug || throwDontExit) {
-              checker.check()
-            }
-            .let ResultMapper@{ result ->
-              when {
-                result.isSafe &&
-                  (xcfa?.unsafeUnrollUsed ?: false) &&
-                  !config.outputConfig.acceptUnreliableSafe -> {
-                  // cannot report safe if force unroll was used
-                  logger.benchmark("Analysis result: $result")
-                  logger.benchmark("Incomplete loop unroll used: safe result is unreliable.")
-                  if (config.outputConfig.acceptUnreliableSafe)
-                    result // for comparison with BMC tools
-                  else SafetyResult.unknown<EmptyProof, EmptyCex>()
-                }
+          logger.info(
+            "%s",
+            "Starting verification of ${if (xcfa?.name == "") "UnnamedXcfa" else (xcfa?.name ?: "DeferredXcfa")} using ${config.backendConfig.backend}\n${config}",
+          )
 
-                result.isUnsafe -> {
+          val result =
+            exitOnError(config.debugConfig.stacktrace, config.debugConfig.debug || throwDontExit) {
+                checker.check()
+              }
+              .let ResultMapper@{ result ->
+                if (result.isUnsafe) {
+                  // A portfolio or in-process run only relays a result that its child checked.
+                  if (
+                    !portfolioRun &&
+                      xcfa != null &&
+                      unsafeDependsOnOverApproximation(
+                        result.asUnsafe().cex,
+                        xcfa,
+                        dataRace =
+                          config.inputConfig.property.inputProperty == ErrorDetection.DATA_RACE,
+                      )
+                  ) {
+                    // Within a portfolio, another config may still settle the task (a Safe verdict
+                    // is sound under over-approximation), so hand over instead of ending on
+                    // Unknown.
+                    if (config.backendConfig.portfolioStep) {
+                      logger.benchmark(
+                        "Unsafe result depends on an over-approximated value: handing over to the next config."
+                      )
+                      exitOnError(config.debugConfig.stacktrace, throwDontExit) {
+                        throw ErrorCodeException(ExitCodes.UNRELIABLE_UNSAFE.code)
+                      }
+                    }
+                    // Downgraded before the property or the raw result is printed: output parsers
+                    // match on both.
+                    logger.result(
+                      "%s",
+                      "Unsafe result depends on an over-approximated library value",
+                    )
+                    return@ResultMapper SafetyResult.unknown<EmptyProof, EmptyCex>()
+                  }
                   // need to determine what kind
                   val property =
                     try {
@@ -326,25 +539,51 @@ private fun backend(
                         result.asUnsafe().cex as? Trace<XcfaState<*>, XcfaAction>
                       )
                     } catch (e: UnknownResultException) {
-                      logger.result("Property couldn't be determined: ${e.message}")
+                      logger.result("%s", "Property couldn't be determined: ${e.message}")
                       return@ResultMapper SafetyResult.unknown<EmptyProof, EmptyCex>()
                     }
                   if (!portfolioRun) {
                     property?.also { logger.result("(Property %s)", it.name) }
                   }
                   result
+                } else {
+                  result
                 }
-
-                else -> result
               }
-            }
 
-        logger.info("Backend finished (in ${stopwatch.elapsed(TimeUnit.MILLISECONDS)} ms)")
-        result
+          logger.info("%s", "Backend finished (in ${stopwatch.elapsedMillis()} ms)")
+          result
+        }
+      }.let { result ->
+        if (
+          result.isSafe &&
+            (xcfa?.unsafeUnrollUsed ?: false) &&
+            !config.outputConfig.acceptUnreliableSafe
+        ) {
+          logger.benchmark("%s", "Analysis result: $result")
+          logger.benchmark("Incomplete loop unroll used: safe result is unreliable.")
+          if (config.outputConfig.acceptUnreliableSafe) {
+            result // for comparison with BMC tools
+          } else {
+            SafetyResult.unknown<EmptyProof, EmptyCex>()
+          }
+        } else if (
+          result.isSafe &&
+            parseContext?.isAddressReuseObservable == true &&
+            config.inputConfig.property.inputProperty in
+              setOf(ErrorDetection.MEMSAFETY, ErrorDetection.MEMCLEANUP) &&
+            !config.outputConfig.acceptUnreliableSafe
+        ) {
+          // Restricted to memory safety, where a freed address and its reuse matter most.
+          logger.benchmark("Freed addresses are compared as integers: safe result is unreliable.")
+          SafetyResult.unknown<EmptyProof, EmptyCex>()
+        } else {
+          result
+        }
       }
     }
   if (!portfolioRun) {
-    logger.result(result.toString())
+    logger.result("%s", result.toString())
   }
   return result
 }
@@ -367,9 +606,10 @@ private fun tracegenBackend(
       checker.check(XcfaPrec(PtrPrec(ExplPrec.of(xcfa!!.collectVars()), emptySet())))
     }
   logger.info(
+    "%s",
     "Backend finished (in ${
-      stopwatch.elapsed(TimeUnit.MILLISECONDS)
-    } ms)\n"
+      stopwatch.elapsedMillis()
+    } ms)\n",
   )
 
   return result
@@ -416,6 +656,7 @@ internal fun concretizeTrace(
   trace: Cex?,
   config: XcfaConfig<*, *>,
   parseContext: ParseContext,
+  logger: Logger,
 ): Trace<XcfaState<ExplState>, XcfaAction> =
   if (config.frontendConfig.inputType == InputType.BTOR2) {
     Btor2XcfaTraceConcretizer.concretize(
@@ -427,12 +668,15 @@ internal fun concretizeTrace(
       parseContext,
     )
   } else {
-    XcfaTraceConcretizer.concretize(
-      trace as Trace<XcfaState<PtrState<*>>, XcfaAction>,
-      getSolver(
-        config.outputConfig.witnessConfig.concretizerSolver,
-        config.outputConfig.witnessConfig.validateConcretizerSolver,
-      ),
-      parseContext,
-    )
+    XcfaTraceConcretizer()
+      .concretize(
+        trace as Trace<XcfaState<PtrState<*>>, XcfaAction>,
+        getSolver(
+          config.outputConfig.witnessConfig.concretizerSolver,
+          config.outputConfig.witnessConfig.validateConcretizerSolver,
+        ),
+        parseContext,
+        config.inputConfig.property,
+        logger,
+      )
   }

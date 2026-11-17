@@ -56,7 +56,8 @@ The workflow to get a formal model from a C file is the following:
 The _IM_ is an interlinked model of the following elements:
 
 * CAssignment: variable assignment
-* CAssume: an assumption over the range of a variable
+* CAssume: an assumption over the range of a variable, optionally preceded by a havoc of it (a
+  declaration without an initializer that can run more than once: in a loop or outside `main`)
 * CBreak: the _break_ C instruction
 * CCall: function call to a C-type function
 * CCase: a branch (_case_) of a switch-case statement
@@ -80,3 +81,14 @@ To map these statements to elements of a formal model,
 the `hu.bme.mit.theta.frontend.transformation.model.statements.CStatementVisitorBase` class can be
 used through inheritance. An example can be found
 in `hu.bme.mit.theta.xcfa.model.utils.FrontendXcfaBuilder`.
+
+## Further reading
+
+The full publication list is at [theta.mit.bme.hu/publications](https://theta.mit.bme.hu/publications/).
+
+* [C for Yourself: Comparison of Front-End Techniques for Formal Verification](https://doi.org/10.1145/3524482.3527646) (FormaliSE 2022) — compares front-end approaches (source-level vs. LLVM-based) and motivates the design of this frontend.
+* [Theta: portfolio of CEGAR-based analyses with dynamic algorithm selection](https://doi.org/10.1007/978-3-030-99527-0_34) (SV-COMP 2022) — introduces reasoning at the source level via direct translation from C.
+* [Gazer-Theta: LLVM-based Verifier Portfolio with BMC/CEGAR](https://doi.org/10.1007/978-3-030-72013-1_27) (SV-COMP 2021) — the earlier, LLVM-based toolchain.
+* [LLVM IR-based Transformations for Software Model Checking](https://theta.mit.bme.hu/publications/sallaigyMsc2019.pdf) (MSc, 2019) — LLVM IR transformations, plus traceability of verification verdicts back to the source.
+* [Boosting Software Verification with Compiler Optimizations](https://doi.org/10.5281/zenodo.291903) (Minisy 2017) — using compiler optimizations to reduce program size before verification.
+* [Development of a Verification Compiler for C Programs](https://theta.mit.bme.hu/publications/sallaigyBsc2016.pdf) (BSc, 2016).

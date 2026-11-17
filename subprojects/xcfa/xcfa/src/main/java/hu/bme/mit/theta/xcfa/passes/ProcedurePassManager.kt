@@ -17,7 +17,55 @@ package hu.bme.mit.theta.xcfa.passes
 
 import hu.bme.mit.theta.common.logging.Logger
 import hu.bme.mit.theta.frontend.ParseContext
+import hu.bme.mit.theta.xcfa.ErrorDetection
 import hu.bme.mit.theta.xcfa.XcfaProperty
+import hu.bme.mit.theta.xcfa.passes.concurrency.AmbiguousMutexPass
+import hu.bme.mit.theta.xcfa.passes.concurrency.AtomicFunctionsPass
+import hu.bme.mit.theta.xcfa.passes.concurrency.CloneProcedureForStaticThreadsPass
+import hu.bme.mit.theta.xcfa.passes.concurrency.PthreadArrayHandleUnrollPass
+import hu.bme.mit.theta.xcfa.passes.concurrency.PthreadBarrierPass
+import hu.bme.mit.theta.xcfa.passes.concurrency.ThreadLocalVarPass
+import hu.bme.mit.theta.xcfa.passes.concurrency.ThreadResultPass
+import hu.bme.mit.theta.xcfa.passes.library.CLibraryFunctionsPass
+import hu.bme.mit.theta.xcfa.passes.library.FormatAccessPass
+import hu.bme.mit.theta.xcfa.passes.library.FpFunctionsToExprsPass
+import hu.bme.mit.theta.xcfa.passes.library.LibraryStubsPass
+import hu.bme.mit.theta.xcfa.passes.library.MemoryFunctionsPass
+import hu.bme.mit.theta.xcfa.passes.library.NondetFunctionPass
+import hu.bme.mit.theta.xcfa.passes.library.PrintfReturnBoundPass
+import hu.bme.mit.theta.xcfa.passes.library.StringLiteralInitPass
+import hu.bme.mit.theta.xcfa.passes.library.SvCompIntrinsicsPass
+import hu.bme.mit.theta.xcfa.passes.loops.UnrollPass
+import hu.bme.mit.theta.xcfa.passes.memory.AllocaFunctionPass
+import hu.bme.mit.theta.xcfa.passes.memory.ByteMemoryPass
+import hu.bme.mit.theta.xcfa.passes.memory.CallocFunctionPass
+import hu.bme.mit.theta.xcfa.passes.memory.FlatMemoryPass
+import hu.bme.mit.theta.xcfa.passes.memory.MallocFunctionPass
+import hu.bme.mit.theta.xcfa.passes.memory.NarrowCellRangePass
+import hu.bme.mit.theta.xcfa.passes.memory.PtrSizeToMemoryPass
+import hu.bme.mit.theta.xcfa.passes.memory.ReferenceElimination
+import hu.bme.mit.theta.xcfa.passes.procedures.FunctionPointerCallsPass
+import hu.bme.mit.theta.xcfa.passes.procedures.InlineProceduresPass
+import hu.bme.mit.theta.xcfa.passes.procedures.InlinedProcedureRemovalPass
+import hu.bme.mit.theta.xcfa.passes.procedures.NoSideEffectPass
+import hu.bme.mit.theta.xcfa.passes.procedures.UnresolvedInvokeToHavocPass
+import hu.bme.mit.theta.xcfa.passes.property.AssertionToErrorLocationPass
+import hu.bme.mit.theta.xcfa.passes.property.DataRaceToReachabilityPass
+import hu.bme.mit.theta.xcfa.passes.property.ErrorLocationPass
+import hu.bme.mit.theta.xcfa.passes.property.FinalLocationPass
+import hu.bme.mit.theta.xcfa.passes.property.MemsafetyPass
+import hu.bme.mit.theta.xcfa.passes.property.OverflowDetectionPass
+import hu.bme.mit.theta.xcfa.passes.structure.DeterministicPass
+import hu.bme.mit.theta.xcfa.passes.structure.EliminateSelfLoops
+import hu.bme.mit.theta.xcfa.passes.structure.EmptyEdgeRemovalPass
+import hu.bme.mit.theta.xcfa.passes.structure.HavocPromotionAndRange
+import hu.bme.mit.theta.xcfa.passes.structure.LbePass
+import hu.bme.mit.theta.xcfa.passes.structure.NormalizePass
+import hu.bme.mit.theta.xcfa.passes.structure.RemoveDeadEnds
+import hu.bme.mit.theta.xcfa.passes.structure.SimplifyExprsPass
+import hu.bme.mit.theta.xcfa.passes.structure.StaticCoiPass
+import hu.bme.mit.theta.xcfa.passes.structure.UnusedLocRemovalPass
+import hu.bme.mit.theta.xcfa.passes.structure.UnusedVarPass
 
 open class ProcedurePassManager(val passes: List<List<ProcedurePass>>) {
 
@@ -43,35 +91,94 @@ class CPasses(property: XcfaProperty, parseContext: ParseContext, uniqueWarningL
       ErrorLocationPass(property),
       AssertionToErrorLocationPass(property),
       FinalLocationPass(property),
+    ),
+    listOf(
       SvCompIntrinsicsPass(),
       FpFunctionsToExprsPass(parseContext),
-      CLibraryFunctionsPass(),
+      // must run before CLibraryFunctionsPass reads the handle, and before ReferenceElimination
+      // rewrites `&t[i]`; in a phase of its own, so that CLibraryFunctionsPass sees every
+      // procedure's handles unrolled when it decides whether handles need to hold thread ids
+      PthreadArrayHandleUnrollPass(parseContext),
     ),
-    listOf(ReferenceElimination(parseContext), MallocFunctionPass(parseContext)),
+    listOf(
+      CLibraryFunctionsPass(
+        parseContext,
+        modelStringLength = property.inputProperty != ErrorDetection.TERMINATION,
+        // a join that waits on a flag blocks where a termination analysis expects a join label
+        runtimeThreadHandles = property.inputProperty != ErrorDetection.TERMINATION,
+      ),
+      // before ReferenceElimination, which folds the `&barrier` handle away
+      PthreadBarrierPass(parseContext),
+      // must run before ReferenceElimination
+      AtomicFunctionsPass(parseContext),
+      // also before ReferenceElimination: the pointer arguments it writes through are still `&x`
+      // here, and once they are folded to a bare base id their pointee type is unrecoverable and
+      // the stub would silently model no write at all. Ahead of the instrumentation passes too,
+      // so those writes are checked for races and memory safety.
+      LibraryStubsPass(parseContext, uniqueWarningLogger),
+    ),
+    listOf(
+      // leaves procedures with pointer parameters to the run after inlining, which sees what the
+      // callers pass
+      ReferenceElimination(parseContext, beforeInlining = true),
+      // lowers to malloc + memset, so it precedes both
+      CallocFunctionPass(parseContext),
+      MallocFunctionPass(parseContext),
+      AllocaFunctionPass(parseContext),
+    ),
     listOf(
       // optimizing
       SimplifyExprsPass(parseContext, property),
-      LoopUnrollPass(),
+      UnrollPass(),
       EmptyEdgeRemovalPass(),
+    ),
+    listOf(
+      // makes indirect calls direct, so that inlining below can see them
+      FunctionPointerCallsPass(parseContext, uniqueWarningLogger)
     ),
     listOf(
       // trying to inline procedures
       InlineProceduresPass(parseContext),
-      NondetFunctionPass(),
+      NondetFunctionPass(parseContext),
     ),
+    // starts copies of thread routines that store their result for pthread_join
+    listOf(ThreadResultPass()),
+    listOf(CloneProcedureForStaticThreadsPass()),
     listOf(
       // Clean up procedures after inlining
       InlinedProcedureRemovalPass()
     ),
+    listOf(ThreadLocalVarPass(parseContext)),
     listOf(
+      // again: inlining turns `&(deref B O)` call arguments into assignments the earlier run of
+      // this pass could not see, and no reference may survive into the analyses
+      ReferenceElimination(parseContext)
+    ),
+    listOf(
+      // after inlining, which gives each format argument its literal; before StringLiteralInitPass,
+      // which can drop the literal's initialization
+      FormatAccessPass(parseContext),
+      PrintfReturnBoundPass(parseContext),
+      // after inlining, so a read through a callee's parameter is a read through the literal here
+      StringLiteralInitPass(),
+      SimplifyExprsPass(parseContext, property), // before unroll to have more chance of unrolling
+      UnrollPass(specificRecursionUnrollLimit = -1),
       EmptyEdgeRemovalPass(),
-      SimplifyExprsPass(parseContext, property),
+      SimplifyExprsPass(parseContext, property), // after unroll to simplify with fewer loops
       UnusedLocRemovalPass(),
-      RemoveDeadEnds(parseContext),
+      RemoveDeadEnds(
+        parseContext,
+        enabled = property.inputProperty == ErrorDetection.ERROR_LOCATION,
+      ),
       EliminateSelfLoops(),
     ),
-    listOf(StaticCoiPass()),
+    listOf(StaticCoiPass(property)),
+    // ahead of the memsafety and overflow guards, so the accesses it spells out are checked, and
+    // after the passes that rebuild expressions, which would lose its one-guard-per-region marks
+    listOf(MemoryFunctionsPass(parseContext, uniqueWarningLogger)),
     listOf(
+      // before the memsafety/overflow guards, so those see cells constrained to their C type
+      NarrowCellRangePass(parseContext),
       // handling remaining function calls
       MemsafetyPass(property, parseContext),
       NoSideEffectPass(property, parseContext),
@@ -90,17 +197,30 @@ class CPasses(property: XcfaProperty, parseContext: ParseContext, uniqueWarningL
         LbePass(parseContext),
         NormalizePass(), // needed after lbe, TODO
         DeterministicPass(), // needed after lbe, TODO
-        SimplifyExprsPass(parseContext),
+        SimplifyExprsPass(parseContext, property),
       )
     } ?: emptyList(),
-    listOf(DataRaceToReachabilityPass(property)),
     listOf(OverflowDetectionPass(property, parseContext)),
+    // last of the passes consuming specific calls: everything left is havoced here
+    listOf(UnresolvedInvokeToHavocPass(parseContext, uniqueWarningLogger)),
+    listOf(AmbiguousMutexPass(parseContext)),
+    // the memory-model passes, downstream of everything that creates or rewrites a dereference
+    listOf(FlatMemoryPass(parseContext)),
+    listOf(ByteMemoryPass(parseContext)),
+    listOf(InlinedProcedureRemovalPass()),
+    listOf(SimplifyExprsPass(parseContext, property)),
     listOf(
       // Final cleanup
-      UnusedVarPass(uniqueWarningLogger, property),
+      SimplifyExprsPass(parseContext, property),
+      UnusedVarPass(uniqueWarningLogger, property, parseContext),
       EmptyEdgeRemovalPass(),
       UnusedLocRemovalPass(),
     ),
+    // on the finished XCFA, as the portfolio applies it: the mem* calls are spelled out and every
+    // other unresolved call is havoced by now, so their accesses are instrumented too
+    listOf(DataRaceToReachabilityPass(property, parseContext)),
+    // last: anything before it may still rewrite or instrument dereferences
+    listOf(PtrSizeToMemoryPass(parseContext)),
   )
 
 class NontermValidationPasses(
@@ -121,9 +241,22 @@ class NontermValidationPasses(
       FinalLocationPass(property),
       SvCompIntrinsicsPass(),
       FpFunctionsToExprsPass(parseContext),
-      CLibraryFunctionsPass(),
+      // must run before CLibraryFunctionsPass reads the handle, and before ReferenceElimination
+      // rewrites `&t[i]`
+      PthreadArrayHandleUnrollPass(parseContext),
+      CLibraryFunctionsPass(parseContext),
+      // before ReferenceElimination, which folds the `&barrier` handle away
+      PthreadBarrierPass(parseContext),
+      // must run before ReferenceElimination
+      AtomicFunctionsPass(parseContext),
     ),
-    listOf(ReferenceElimination(parseContext), MallocFunctionPass(parseContext)),
+    listOf(
+      ReferenceElimination(parseContext),
+      // lowers to malloc + memset, so it precedes both
+      CallocFunctionPass(parseContext),
+      MallocFunctionPass(parseContext),
+      AllocaFunctionPass(parseContext),
+    ),
     listOf(
       // optimizing
       UnusedLocRemovalPass()
@@ -137,7 +270,7 @@ class NontermValidationPasses(
       // handling remaining function calls
       MemsafetyPass(property, parseContext),
       NoSideEffectPass(property, parseContext),
-      NondetFunctionPass(),
+      NondetFunctionPass(parseContext),
       HavocPromotionAndRange(parseContext),
       // Final cleanup
       UnusedVarPass(uniqueWarningLogger, property),
@@ -169,6 +302,47 @@ class ChcPasses(parseContext: ParseContext, uniqueWarningLogger: Logger) :
       //      DeterministicPass(), // needed after lbe, TODO
       // Final cleanup
       UnusedVarPass(uniqueWarningLogger),
+    ),
+  )
+
+class SvLibPasses(parseContext: ParseContext, logger: Logger) :
+  ProcedurePassManager(
+    listOf(
+      // formatting
+      NormalizePass(),
+      DeterministicPass(),
+      // removing redundant elements
+      EmptyEdgeRemovalPass(),
+      UnusedLocRemovalPass(parseContext),
+    ),
+    listOf(
+      // optimizing
+      SimplifyExprsPass(parseContext, recordPassInvariants = true),
+      UnrollPass(),
+      EmptyEdgeRemovalPass(),
+    ),
+    listOf(
+      // trying to inline procedures
+      InlineProceduresPass(parseContext)
+    ),
+    listOf(
+      // Clean up procedures after inlining
+      InlinedProcedureRemovalPass(parseContext)
+    ),
+    listOf(
+      EmptyEdgeRemovalPass(),
+      SimplifyExprsPass(parseContext, recordPassInvariants = true),
+      UnusedLocRemovalPass(parseContext),
+      RemoveDeadEnds(parseContext, recordPassInvariants = true),
+      EliminateSelfLoops(),
+    ),
+    listOf(StaticCoiPass()),
+    listOf(LbePass(parseContext), NormalizePass(), DeterministicPass(), EliminateSelfLoops()),
+    listOf(
+      // Final cleanup
+      UnusedVarPass(logger),
+      EmptyEdgeRemovalPass(),
+      UnusedLocRemovalPass(),
     ),
   )
 

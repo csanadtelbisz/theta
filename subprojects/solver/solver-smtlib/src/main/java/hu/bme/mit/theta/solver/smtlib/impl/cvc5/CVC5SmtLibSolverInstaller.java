@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -92,18 +92,11 @@ public class CVC5SmtLibSolverInstaller extends SmtLibSolverInstaller.Default {
                                                         .toString())
                                         .getChannel()) {
                     outputChannel.transferFrom(inputChannel, 0, Long.MAX_VALUE);
-                    installDir
-                            .resolve(getSolverBinaryName(version))
-                            .toFile()
-                            .setExecutable(true, true);
+                    makeExecutable(installDir.resolve(getSolverBinaryName(version)));
                 }
             } else {
                 Compress.extract(inputStream, installDir, Compress.CompressionType.ZIP);
-                installDir
-                        .resolve("bin")
-                        .resolve(getSolverBinaryName(version))
-                        .toFile()
-                        .setExecutable(true, true);
+                makeExecutable(installDir.resolve("bin").resolve(getSolverBinaryName(version)));
             }
 
         } catch (IOException e) {
@@ -163,8 +156,9 @@ public class CVC5SmtLibSolverInstaller extends SmtLibSolverInstaller.Default {
     @Override
     public List<String> getSupportedVersions() {
         return Arrays.asList(
-                "1.3.1", "1.3.0", "1.2.1", "1.2.0", "1.1.2", "1.1.1", "1.1.0", "1.0.9", "1.0.8",
-                "1.0.7", "1.0.6", "1.0.5", "1.0.4", "1.0.3", "1.0.2", "1.0.1", "1.0.0");
+                "1.3.4", "1.3.3", "1.3.2", "1.3.1", "1.3.0", "1.2.1", "1.2.0", "1.1.2", "1.1.1",
+                "1.1.0", "1.0.9", "1.0.8", "1.0.7", "1.0.6", "1.0.5", "1.0.4", "1.0.3", "1.0.2",
+                "1.0.1", "1.0.0");
     }
 
     private URL getDownloadUrl(final String version)

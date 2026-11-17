@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -16,10 +16,8 @@
 package hu.bme.mit.theta.frontend.transformation.model.types.simple;
 
 import hu.bme.mit.theta.common.logging.Logger;
-import hu.bme.mit.theta.core.type.Expr;
 import hu.bme.mit.theta.frontend.ParseContext;
-import java.util.Map;
-import java.util.Optional;
+import java.util.List;
 
 public class CSimpleTypeFactory {
 
@@ -43,6 +41,10 @@ public class CSimpleTypeFactory {
         return Extern.instance;
     }
 
+    public static Static Static() {
+        return Static.instance;
+    }
+
     public static Typedef Typedef() {
         return Typedef.instance;
     }
@@ -56,13 +58,22 @@ public class CSimpleTypeFactory {
         return new DeclaredName(declaredName);
     }
 
-    public static Enum Enum(final String id, final Map<String, Optional<Expr<?>>> fields) {
-        return new Enum(id, fields);
+    public static Enum Enum(
+            final String id, final List<String> names, final Enum.IntegerType type) {
+        return new Enum(id, names, type);
     }
 
     public static Struct Struct(
             final String name, ParseContext parseContext, Logger uniqueWarningLogger) {
         return new Struct(name, parseContext, uniqueWarningLogger);
+    }
+
+    public static Struct Struct(
+            final String name,
+            final boolean union,
+            ParseContext parseContext,
+            Logger uniqueWarningLogger) {
+        return new Struct(name, union, parseContext, uniqueWarningLogger);
     }
 
     public static ThreadLocal ThreadLocal() {

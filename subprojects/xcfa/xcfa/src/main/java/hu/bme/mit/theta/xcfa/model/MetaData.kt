@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -20,11 +20,23 @@ abstract class MetaData {
   abstract fun combine(other: MetaData): MetaData
 
   abstract fun isSubstantial(): Boolean
+
+  /**
+   * Called when the visits of a location with this metadata may no longer all pass through
+   * locations with this metadata: it was removed, or copied without the marks of [keepsLocation].
+   */
+  open fun onLocationLost() {}
+
+  /** Whether passes keep a location with this metadata instead of merging it into another. */
+  open fun keepsLocation(): Boolean = false
+
+  /**
+   * The metadata of a copy of a location with this metadata, without the marks of [keepsLocation].
+   */
+  open fun withoutLocationMarks(): MetaData = this
 }
 
-object EmptyMetaData : MetaData() {
-  // TODO why is this necessary? {@see GsonTest.kt}
-  private val hash = 123123
+data object EmptyMetaData : MetaData() {
 
   override fun combine(other: MetaData): MetaData {
     return other
@@ -33,8 +45,4 @@ object EmptyMetaData : MetaData() {
   override fun isSubstantial(): Boolean {
     return false
   }
-
-  override fun equals(other: Any?): Boolean = other is EmptyMetaData
-
-  override fun hashCode(): Int = hash
 }

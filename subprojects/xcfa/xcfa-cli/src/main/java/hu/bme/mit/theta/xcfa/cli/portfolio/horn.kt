@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -17,15 +17,14 @@ package hu.bme.mit.theta.xcfa.cli.portfolio
 
 import hu.bme.mit.theta.common.logging.Logger
 import hu.bme.mit.theta.frontend.ParseContext
-import hu.bme.mit.theta.frontend.transformation.ArchitectureConfig
 import hu.bme.mit.theta.frontend.transformation.grammar.preprocess.ArithmeticTrait
 import hu.bme.mit.theta.graphsolver.patterns.constraints.MCM
 import hu.bme.mit.theta.xcfa.ErrorDetection.DATA_RACE
 import hu.bme.mit.theta.xcfa.cli.params.*
 import hu.bme.mit.theta.xcfa.cli.runConfig
 import hu.bme.mit.theta.xcfa.model.XCFA
-import hu.bme.mit.theta.xcfa.passes.LbePass
-import hu.bme.mit.theta.xcfa.passes.LoopUnrollPass
+import hu.bme.mit.theta.xcfa.passes.loops.UnrollPass
+import hu.bme.mit.theta.xcfa.passes.structure.LbePass
 
 fun hornPortfolio(
   xcfa: XCFA,
@@ -42,20 +41,18 @@ fun hornPortfolio(
     XcfaConfig(
       inputConfig =
         portfolioConfig.inputConfig.copy(
-          xcfaWCtx =
-            if (portfolioConfig.backendConfig.parseInProcess) null
-            else Triple(xcfa, mcm, parseContext),
+          xcfaWCtx = null,
           propertyFile = null,
           property = portfolioConfig.inputConfig.property,
         ),
       frontendConfig =
         FrontendConfig(
           lbeLevel = LbePass.defaultLevel,
-          loopUnroll = LoopUnrollPass.UNROLL_LIMIT,
-          inputType = InputType.C,
+          loopUnroll = UnrollPass.UNROLL_LIMIT,
+          inputType = portfolioConfig.frontendConfig.inputType,
           enableDataRaceToReachability =
             portfolioConfig.inputConfig.property.verifiedProperty == DATA_RACE,
-          specConfig = CFrontendConfig(arithmetic = ArchitectureConfig.ArithmeticType.efficient),
+          specConfig = portfolioConfig.frontendConfig.specConfig,
         ),
       backendConfig =
         BackendConfig(
@@ -99,7 +96,6 @@ fun hornPortfolio(
         backendConfig.copy(
           timeoutMs = timeoutMs,
           inProcess = inProcess,
-          parseInProcess = inProcess && portfolioConfig.backendConfig.parseInProcess,
           specConfig = backendConfig.specConfig!!.copy(solver = solver),
         )
     )

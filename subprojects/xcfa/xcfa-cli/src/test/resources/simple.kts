@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ import hu.bme.mit.theta.xcfa.cli.*
 import hu.bme.mit.theta.xcfa.cli.params.*
 import hu.bme.mit.theta.xcfa.cli.portfolio.*
 import hu.bme.mit.theta.xcfa.model.XCFA
-import hu.bme.mit.theta.xcfa.passes.LbePass
+import hu.bme.mit.theta.xcfa.passes.structure.LbePass
 import java.nio.file.Paths
 
 fun portfolio(
@@ -63,7 +63,6 @@ fun portfolio(
             CegarConfig(
               initPrec = InitPrec.EMPTY,
               por = POR.NOPOR,
-              porSeed = -1,
               coi = ConeOfInfluenceMode.NO_COI,
               cexMonitor = CexMonitorOptions.CHECK,
               abstractorConfig =

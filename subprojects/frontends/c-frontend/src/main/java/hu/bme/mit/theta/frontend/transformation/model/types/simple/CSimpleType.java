@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -15,7 +15,12 @@
  */
 package hu.bme.mit.theta.frontend.transformation.model.types.simple;
 
+import hu.bme.mit.theta.frontend.ParseContext;
+import hu.bme.mit.theta.frontend.transformation.model.statements.CStatement;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.CComplexType;
+import hu.bme.mit.theta.frontend.transformation.model.types.complex.compound.CArray;
+import hu.bme.mit.theta.frontend.transformation.model.types.complex.compound.CPointer;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -29,6 +34,7 @@ public abstract class CSimpleType {
     private boolean bool = false;
     private boolean atomic = false;
     private boolean extern = false;
+    private boolean staticStorage = false;
     private boolean typedef = false;
     private boolean isVolatile = false;
     private boolean isShort = false;
@@ -47,18 +53,193 @@ public abstract class CSimpleType {
         return pointerLevel;
     }
 
+    private boolean functionPointer = false;
+
+    /** True when this type is a pointer to a function (e.g. a `typedef int (*h)(int)`). */
+    public boolean isFunctionPointer() {
+        return functionPointer;
+    }
+
+    public void setFunctionPointer(boolean functionPointer) {
+        this.functionPointer = functionPointer;
+    }
+
+    /**
+     * The array dimensions a `typedef` wrote in its own declarator (`typedef int arr_t[2]`).
+     *
+     * <p>Dimensions normally live on the *declarator* ({@link
+     * hu.bme.mit.theta.frontend.transformation.model.declaration.CDeclaration#getArrayDimensions}),
+     * not on the type -- but a typedef's declarator belongs to the typedef, and every later `arr_t
+     * a;` has a declarator of its own with no brackets in it. Without carrying them here the
+     * array-ness was simply lost: the variable was created as a scalar and no `alloca` was emitted
+     * for it, so the object had no size and the very first element read failed the valid-deref
+     * bound check.
+     *
+     * <p>Carried on the type for the same reason {@link #functionPointer} is -- see {@code
+     * TypedefVisitor#markArrayTypedefs}.
+     */
+    private List<CStatement> typedefArrayDimensions = new ArrayList<>();
+
+    public List<CStatement> getTypedefArrayDimensions() {
+        return typedefArrayDimensions;
+    }
+
+    public void setTypedefArrayDimensions(List<CStatement> dimensions) {
+        this.typedefArrayDimensions = new ArrayList<>(dimensions);
+    }
+
+    /**
+     * Stars written after an array typedef's name (`arr_t *p`). They point to the whole array, so
+     * they cannot go on {@link #getPointerLevel}, which is applied to the element inside it.
+     */
+    private int pointersToTypedefArray = 0;
+
+    public int getPointersToTypedefArray() {
+        return pointersToTypedefArray;
+    }
+
+    public void incrementPointerToTypedefArray() {
+        ++pointersToTypedefArray;
+    }
+
+    /** {@code element} wrapped into this typedef's array and the pointers written to it, if any. */
+    protected CComplexType withPointersToTypedefArray(
+            CComplexType element, ParseContext parseContext) {
+        if (pointersToTypedefArray == 0) {
+            return element;
+        }
+        CComplexType type = element;
+        for (int i = typedefArrayDimensions.size() - 1; i >= 0; i--) {
+            type = new CArray(this, type, parseContext, typedefArrayDimensions.get(i));
+        }
+        for (int i = 0; i < pointersToTypedefArray; i++) {
+            type = new CPointer(this, type, parseContext);
+        }
+        return type;
+    }
+
+    /**
+     * Which pointer levels are atomic, innermost first -- one entry per `*`. `_Atomic` attaches to
+     * a *level* of a type, not to a declaration, and the level is what decides what may be raced
+     * on: an access *through* `p` touches what `p` points at, so `_Atomic int *p` makes `p[i]`
+     * race-free while leaving `p` an ordinary variable, and `int * _Atomic p` is the exact
+     * opposite. One boolean per declaration cannot tell those apart.
+     */
+    private final List<Boolean> atomicPointers = new ArrayList<>();
+
+    /**
+     * How many of the pointer levels came from a `*` written in *this* declaration, as opposed to
+     * being inherited from the type the specifiers name (a typedef of a pointer, say).
+     *
+     * <p>The grammar folds the `*` of `int *p` into the declaration specifiers, so by the time a
+     * qualifier is applied the type already has a pointer and there is otherwise no way to tell
+     * `_Atomic int *p` (the `*` is this declaration's, so `_Atomic` reached only the `int`) from
+     * `int_ptr _Atomic p` (the pointer came with the typedef, so `_Atomic` qualifies *it*).
+     */
+    private int starPointers = 0;
+
     public void incrementPointer() {
         ++pointerLevel;
+        atomicPointers.add(false);
+        ++starPointers;
+    }
+
+    public int getStarPointers() {
+        return starPointers;
+    }
+
+    /**
+     * Drops the pointer levels written as stars in this declaration's specifiers, keeping the ones
+     * the named type came with. In `int *a, b` the grammar folds `a`'s star into the specifiers `b`
+     * shares, so `b` has to shed it.
+     */
+    public void dropStarPointers() {
+        keepInnermostPointers(pointerLevel - starPointers);
+        starPointers = 0;
+    }
+
+    /**
+     * Drops outermost pointer levels until at most [levels] remain, i.e. what dereferencing a value
+     * of this type yields. Their atomicity goes with them.
+     */
+    public void keepInnermostPointers(int levels) {
+        while (pointerLevel > levels) {
+            --pointerLevel;
+            atomicPointers.remove(atomicPointers.size() - 1);
+        }
+        starPointers = Math.min(starPointers, pointerLevel);
+    }
+
+    /** Lvalue conversion: the value read out of an atomic object is not itself atomic. */
+    public void clearOutermostAtomic() {
+        if (pointerLevel > 0) {
+            atomicPointers.set(pointerLevel - 1, false);
+        } else {
+            atomic = false;
+        }
+    }
+
+    /** Whether the pointer at this level -- 0 being the innermost -- is itself atomic. */
+    public boolean isAtomicPointer(int level) {
+        return level < atomicPointers.size() && atomicPointers.get(level);
+    }
+
+    /** `int * _Atomic p`: the `_Atomic` sits after a star, so it is that pointer that is atomic. */
+    public void markLastPointerAtomic() {
+        if (!atomicPointers.isEmpty()) {
+            atomicPointers.set(atomicPointers.size() - 1, true);
+        } else {
+            atomic = true;
+        }
+    }
+
+    /** `_Atomic(T)`: the whole of T is atomic -- its outermost level, whatever that is. */
+    public void markOutermostAtomic() {
+        if (pointerLevel > 0) {
+            atomicPointers.set(pointerLevel - 1, true);
+        } else {
+            atomic = true;
+        }
+        // What `_Atomic(T)` yields is a type in its own right. Any `*` after it belongs to the
+        // declarator and wraps *around* it, so nothing here is a star of this declaration's.
+        starPointers = 0;
+    }
+
+    /**
+     * `_Atomic` written among the declaration specifiers, which qualifies the type they name.
+     *
+     * <p>That type is the base -- what is written before this declaration's own `*`s -- so for
+     * `_Atomic int *p` it is the `int`, and for `int_ptr _Atomic p` (a typedef of `int *`) it is
+     * the pointer the typedef brought with it.
+     */
+    public void applyAtomicQualifier() {
+        int inheritedPointers = pointerLevel - starPointers;
+        if (inheritedPointers > 0) {
+            atomicPointers.set(inheritedPointers - 1, true);
+        } else {
+            atomic = true;
+        }
+    }
+
+    /**
+     * The pointers this type already has came *with* it -- it was named by a typedef -- so none of
+     * them is a star of the declaration now being read, and a `_Atomic` there qualifies the
+     * outermost of them rather than reaching past them to the scalar underneath.
+     */
+    public void markPointersInherited() {
+        starPointers = 0;
     }
 
     public CSimpleType apply(List<CSimpleType> newCtypes) {
+        CSimpleType acc = this;
         for (CSimpleType newCtype : newCtypes) {
-            newCtype.patch(this);
+            acc = newCtype.patch(acc);
         }
-        return this;
+        return acc;
     }
 
-    protected abstract void patch(CSimpleType cSimpleType);
+    // we return the patched csimpletype, which might be mutated
+    protected abstract CSimpleType patch(CSimpleType cSimpleType);
 
     public boolean isBool() {
         return bool;
@@ -82,6 +263,18 @@ public abstract class CSimpleType {
 
     public boolean isExtern() {
         return extern;
+    }
+
+    /**
+     * Whether the declaration carried {@code static}. Only consulted for a *local* declaration,
+     * which it gives static storage duration; at file scope the specifier only affects linkage.
+     */
+    public boolean isStaticStorage() {
+        return staticStorage;
+    }
+
+    public void setStaticStorage(boolean staticStorage) {
+        this.staticStorage = staticStorage;
     }
 
     public void setExtern(boolean extern) {
@@ -188,6 +381,7 @@ public abstract class CSimpleType {
     protected void setUpCopy(CSimpleType copy) {
         copy.setAtomic(this.isAtomic());
         copy.setExtern(this.isExtern());
+        copy.setStaticStorage(this.isStaticStorage());
         copy.setTypedef(this.isTypedef());
         copy.setVolatile(this.isVolatile());
         copy.setSigned(this.isSigned());
@@ -198,6 +392,14 @@ public abstract class CSimpleType {
         copy.set128(this.is128());
         for (int i = 0; i < this.getPointerLevel(); i++) {
             copy.incrementPointer();
+            if (this.isAtomicPointer(i)) {
+                copy.markLastPointerAtomic();
+            }
         }
+        copy.starPointers = this.starPointers; // a copy inherits what the original inherited
+        copy.setFunctionPointer(this.isFunctionPointer());
+        // resolveTypedefName hands users a copyOf(), so a typedef's dimensions must survive it.
+        copy.setTypedefArrayDimensions(this.getTypedefArrayDimensions());
+        copy.pointersToTypedefArray = this.pointersToTypedefArray;
     }
 }

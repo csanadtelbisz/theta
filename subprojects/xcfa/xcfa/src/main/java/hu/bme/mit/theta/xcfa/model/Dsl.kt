@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,9 @@ import hu.bme.mit.theta.core.type.Expr
 import hu.bme.mit.theta.core.type.LitExpr
 import hu.bme.mit.theta.core.type.Type
 import hu.bme.mit.theta.core.type.anytype.Dereference
+import hu.bme.mit.theta.core.type.anytype.Exprs.Reference
 import hu.bme.mit.theta.core.type.booltype.BoolType
+import hu.bme.mit.theta.core.type.inttype.IntExprs.Int
 import hu.bme.mit.theta.grammar.dsl.SimpleScope
 import hu.bme.mit.theta.grammar.dsl.expr.ExpressionWrapper
 import hu.bme.mit.theta.xcfa.passes.ProcedurePassManager
@@ -209,7 +211,7 @@ class XcfaProcedureBuilderContext(val builder: XcfaProcedureBuilder) {
           else if (it is String) this@XcfaProcedureBuilderContext.builder.parse(it)
           else error("Bad type")
         }
-      val label = InvokeLabel(this.builder.name, exprs, EmptyMetaData)
+      val label = InvokeLabel(this.builder, exprs, EmptyMetaData)
       this@SequenceLabelContext.labelList.add(label)
       return SequenceLabel(this@SequenceLabelContext.labelList)
     }
@@ -221,7 +223,8 @@ class XcfaProcedureBuilderContext(val builder: XcfaProcedureBuilder) {
           else if (it is String) this@XcfaProcedureBuilderContext.builder.parse(it)
           else error("Bad type")
         }
-      val label = InvokeLabel(this, exprs, EmptyMetaData)
+      // param directions aren't available, so we use INOUT to fit all
+      val label = InvokeLabel(this, exprs.map { it to ParamDirection.INOUT }, EmptyMetaData)
       this@SequenceLabelContext.labelList.add(label)
       return SequenceLabel(this@SequenceLabelContext.labelList)
     }
@@ -317,14 +320,14 @@ class XcfaProcedureBuilderContext(val builder: XcfaProcedureBuilder) {
 
     fun mutex_lock(handle: String): SequenceLabel {
       val mutex = this@XcfaProcedureBuilderContext.builder.lookup(handle)
-      val label = MutexLockLabel(mutex)
+      val label = MutexLockLabel(Reference(mutex.ref, Int()))
       labelList.add(label)
       return SequenceLabel(labelList)
     }
 
     fun mutex_unlock(handle: String): SequenceLabel {
       val mutex = this@XcfaProcedureBuilderContext.builder.lookup(handle)
-      val label = MutexUnlockLabel(mutex)
+      val label = MutexUnlockLabel(Reference(mutex.ref, Int()))
       labelList.add(label)
       return SequenceLabel(labelList)
     }

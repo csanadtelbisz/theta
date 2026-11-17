@@ -13,6 +13,18 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  */
+plugins {
+    id("com.gradleup.nmcp.settings") version "1.5.0"
+}
+
+nmcpSettings {
+    centralPortal {
+        username = System.getenv("OSSRH_USERNAME")
+        password = System.getenv("OSSRH_PASSWORD")
+        publishingType = "AUTOMATIC"
+    }
+}
+
 rootProject.name = "theta"
 
 include(
@@ -32,6 +44,7 @@ include(
     "frontends/petrinet-xsts",
     "frontends/dve-frontend",
     "frontends/chc-frontend",
+    "frontends/svlib-frontend",
     "frontends/llvm",
 
     "cfa/cfa",

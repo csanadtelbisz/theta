@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 package hu.bme.mit.theta.xcfa.analysis.oc
 
 import hu.bme.mit.theta.analysis.algorithm.oc.Relation
+import hu.bme.mit.theta.core.decl.IndexedConstDecl
 import hu.bme.mit.theta.core.decl.VarDecl
 import hu.bme.mit.theta.core.type.Expr
 import hu.bme.mit.theta.core.type.booltype.BoolExprs
@@ -23,8 +24,14 @@ import hu.bme.mit.theta.core.type.booltype.BoolExprs.And
 import hu.bme.mit.theta.core.type.booltype.BoolExprs.Or
 import hu.bme.mit.theta.core.type.booltype.BoolType
 import hu.bme.mit.theta.core.utils.ExprUtils
+import hu.bme.mit.theta.frontend.ParseContext
 import hu.bme.mit.theta.xcfa.model.XcfaLocation
 import hu.bme.mit.theta.xcfa.model.XcfaProcedure
+import hu.bme.mit.theta.xcfa.model.optimizeFurther
+import hu.bme.mit.theta.xcfa.passes.ProcedurePassManager
+import hu.bme.mit.theta.xcfa.passes.concurrency.AtomicReadsOneWritePass
+import hu.bme.mit.theta.xcfa.passes.memory.AllocationSitesPass
+import hu.bme.mit.theta.xcfa.passes.witness.WitnessOptimizer
 
 internal typealias E = XcfaEvent
 
@@ -59,8 +66,12 @@ internal data class Violation(
   val lastEvents: List<XcfaEvent>,
 )
 
-internal data class Thread(
-  val pid: Int = uniqueId(),
+internal data class UnrollExit(val key: String, val pid: Int, val guard: Expr<BoolType>)
+
+@ConsistentCopyVisibility
+internal data class Thread
+private constructor(
+  val pid: Int,
   val procedure: XcfaProcedure,
   val guard: Set<Expr<BoolType>> = setOf(),
   val pidVar: VarDecl<*>? = null,
@@ -77,6 +88,39 @@ internal data class Thread(
     private var cnt: Int = 0
 
     fun uniqueId(): Int = cnt++
+
+    // the trace extractor expects the main thread at pid 0
+    fun resetIds() {
+      cnt = 0
+    }
+
+    private lateinit var allocationSitesPass: AllocationSitesPass
+
+    fun of(
+      procedure: XcfaProcedure,
+      parseContext: ParseContext,
+      params: List<Expr<*>> = listOf(),
+      pid: Int = uniqueId(),
+      guard: Set<Expr<BoolType>> = setOf(),
+      pidVar: VarDecl<*>? = null,
+      startEvent: XcfaEvent? = null,
+      startHistory: List<String> = listOf(),
+      lastWrites: Map<VarDecl<*>, Set<E>> = mapOf(),
+    ): Thread {
+      if (!::allocationSitesPass.isInitialized) {
+        allocationSitesPass = AllocationSitesPass(parseContext)
+      }
+      val passManager =
+        ProcedurePassManager(
+          listOfNotNull(
+            allocationSitesPass,
+            WitnessOptimizer(params, parseContext, procedure.name),
+            AtomicReadsOneWritePass(),
+          )
+        )
+      val p = procedure.optimizeFurther(passManager, "${procedure.name}[$pid]", pid.toString())
+      return Thread(pid, p, guard, pidVar, startEvent, startHistory, lastWrites)
+    }
   }
 }
 
@@ -85,13 +129,9 @@ internal data class SearchItem(val loc: XcfaLocation) {
   val guards: MutableList<Set<Expr<BoolType>>> = mutableListOf()
   val lastEvents: MutableList<XcfaEvent> = mutableListOf()
   val lastWrites: MutableList<Map<VarDecl<*>, Set<XcfaEvent>>> = mutableListOf()
+  val localValues: MutableList<Map<VarDecl<*>, IndexedConstDecl<*>>> = mutableListOf()
   val threadLookups: MutableList<Map<VarDecl<*>, Set<Pair<Set<Expr<BoolType>>, Thread>>>> =
     mutableListOf()
   val atomics: MutableList<Int?> = mutableListOf()
   var incoming: Int = 0
-}
-
-internal data class StackItem(val event: XcfaEvent) {
-
-  var eventsToVisit: MutableList<XcfaEvent>? = null
 }

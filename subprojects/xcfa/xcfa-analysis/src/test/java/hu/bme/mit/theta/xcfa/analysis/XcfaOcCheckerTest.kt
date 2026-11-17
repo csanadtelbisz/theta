@@ -1,5 +1,5 @@
 /*
- *  Copyright 2025 Budapest University of Technology and Economics
+ *  Copyright 2026 Budapest University of Technology and Economics
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -17,35 +17,104 @@ package hu.bme.mit.theta.xcfa.analysis
 
 import hu.bme.mit.theta.analysis.algorithm.SafetyResult
 import hu.bme.mit.theta.c2xcfa.getXcfaFromC
+import hu.bme.mit.theta.common.exception.NotSolvableException
 import hu.bme.mit.theta.common.logging.NullLogger
 import hu.bme.mit.theta.frontend.ParseContext
+import hu.bme.mit.theta.frontend.UnsupportedFrontendElementException
+import hu.bme.mit.theta.frontend.transformation.ArchitectureConfig.ArithmeticType
+import hu.bme.mit.theta.frontend.transformation.ArchitectureConfig.MemoryModelType
 import hu.bme.mit.theta.solver.SolverManager
 import hu.bme.mit.theta.xcfa.ErrorDetection
 import hu.bme.mit.theta.xcfa.XcfaProperty
 import hu.bme.mit.theta.xcfa.analysis.oc.AutoConflictFinderConfig
 import hu.bme.mit.theta.xcfa.analysis.oc.OcDecisionProcedureType
 import hu.bme.mit.theta.xcfa.analysis.oc.XcfaOcChecker
+import hu.bme.mit.theta.xcfa.passes.memory.PtrSizeToMemoryPass
+import hu.bme.mit.theta.xcfa.passes.structure.LbePass
 import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.BeforeAll
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.CsvSource
 import org.junit.jupiter.params.provider.MethodSource
 
 class XcfaOcCheckerTest {
 
   companion object {
 
-    private val program = "/04multithread.c"
+    private val programs = listOf("/04multithread.c", "/16shortcircuit_call_or.c")
     private val verdict = SafetyResult<*, *>::isUnsafe
     private val property = XcfaProperty(ErrorDetection.ERROR_LOCATION)
 
     @JvmStatic
     fun data(): Collection<Array<Any?>> {
-      return listOf(
-        arrayOf(OcDecisionProcedureType.IDL, AutoConflictFinderConfig.NONE, null),
-        arrayOf(OcDecisionProcedureType.PROPAGATOR, AutoConflictFinderConfig.SIMPLE, null),
-        arrayOf(OcDecisionProcedureType.BASIC, AutoConflictFinderConfig.GENERIC, 3),
-      )
+      return programs.flatMap { program ->
+        listOf(
+          arrayOf(program, OcDecisionProcedureType.IDL, AutoConflictFinderConfig.NONE, null),
+          arrayOf(
+            program,
+            OcDecisionProcedureType.PROPAGATOR,
+            AutoConflictFinderConfig.SIMPLE,
+            null,
+          ),
+          arrayOf(program, OcDecisionProcedureType.BASIC, AutoConflictFinderConfig.GENERIC, 3),
+        )
+      }
     }
+
+    /**
+     * Verdicts depending on the unroll exits, on cell-sensitive ordering constraints and on the
+     * program order within atomic units.
+     */
+    @JvmStatic
+    fun unrollData(): Collection<Array<Any>> =
+      OcDecisionProcedureType.entries.flatMap { dp ->
+        listOf(
+          arrayOf("/13loop_bound_safe.c", dp, SafetyResult<*, *>::isSafe),
+          arrayOf("/14sequential_loops_unsafe.c", dp, SafetyResult<*, *>::isUnsafe),
+          arrayOf("/15sequential_loops_safe.c", dp, SafetyResult<*, *>::isSafe),
+          arrayOf("/20mutex_counter_unsafe.c", dp, SafetyResult<*, *>::isUnsafe),
+          arrayOf("/23atomic_loop_unsafe.c", dp, SafetyResult<*, *>::isUnsafe),
+          arrayOf("/27overwrite_in_atomic_safe.c", dp, SafetyResult<*, *>::isSafe),
+          arrayOf("/28overwrite_in_atomic_unsafe.c", dp, SafetyResult<*, *>::isUnsafe),
+          arrayOf("/29alloca_thread_join_unsafe.c", dp, SafetyResult<*, *>::isUnsafe),
+          arrayOf("/31conditional_join_unsafe.c", dp, SafetyResult<*, *>::isUnsafe),
+          // single-threaded: the candidates and branches are decided on the forward values
+          arrayOf("/42forward_conditional_overwrite_unsafe.c", dp, SafetyResult<*, *>::isUnsafe),
+          arrayOf("/43forward_overwrite_safe.c", dp, SafetyResult<*, *>::isSafe),
+          arrayOf("/44forward_known_branch_unsafe.c", dp, SafetyResult<*, *>::isUnsafe),
+          arrayOf("/45forward_known_branch_safe.c", dp, SafetyResult<*, *>::isSafe),
+          arrayOf("/46forward_pointer_in_memory_unsafe.c", dp, SafetyResult<*, *>::isUnsafe),
+          arrayOf("/47forward_two_addresses_unsafe.c", dp, SafetyResult<*, *>::isUnsafe),
+          arrayOf("/48forward_two_addresses_safe.c", dp, SafetyResult<*, *>::isSafe),
+        )
+      } +
+        // the propagator fails to look up the rf terms of this program's memory accesses
+        OcDecisionProcedureType.entries
+          .filter { it != OcDecisionProcedureType.PROPAGATOR }
+          .map { arrayOf("/30atomic_memassign_safe.c", it, SafetyResult<*, *>::isSafe) }
+
+    @JvmStatic
+    fun dataRaceData(): Collection<Array<Any>> =
+      listOf(
+        arrayOf("/04multithread.c", SafetyResult<*, *>::isSafe),
+        arrayOf("/05datarace.c", SafetyResult<*, *>::isUnsafe),
+        arrayOf("/06ptrdatarace.c", SafetyResult<*, *>::isSafe),
+        arrayOf("/07mutex.c", SafetyResult<*, *>::isSafe),
+        arrayOf("/09atomicfield_norace.c", SafetyResult<*, *>::isSafe),
+        arrayOf("/10plainfield_race.c", SafetyResult<*, *>::isUnsafe),
+        arrayOf("/11atomicarray_norace.c", SafetyResult<*, *>::isSafe),
+        arrayOf("/12pthread_array_race.c", SafetyResult<*, *>::isUnsafe),
+        arrayOf("/16race_one_atomic.c", SafetyResult<*, *>::isUnsafe),
+        arrayOf("/17norace_atomic_blocks.c", SafetyResult<*, *>::isSafe),
+        arrayOf("/18race_after_loop.c", SafetyResult<*, *>::isUnsafe),
+        arrayOf("/19norace_join.c", SafetyResult<*, *>::isSafe),
+        arrayOf("/21race_atomic_abort_loop.c", SafetyResult<*, *>::isUnsafe),
+        arrayOf("/22race_atomic_reach_error_loop.c", SafetyResult<*, *>::isUnsafe),
+        arrayOf("/24race_atomic_abort_write.c", SafetyResult<*, *>::isUnsafe),
+        arrayOf("/33struct_array_field_norace.c", SafetyResult<*, *>::isSafe),
+        arrayOf("/34struct_array_field_race.c", SafetyResult<*, *>::isUnsafe),
+      )
 
     @BeforeAll
     @JvmStatic
@@ -57,6 +126,7 @@ class XcfaOcCheckerTest {
   @ParameterizedTest
   @MethodSource("data")
   fun testOcChecker(
+    program: String,
     decisionProcedure: OcDecisionProcedureType,
     autoConflictFinderConfig: AutoConflictFinderConfig,
     autoConflictBound: Int?,
@@ -65,24 +135,151 @@ class XcfaOcCheckerTest {
       "Testing $program with ($decisionProcedure, $autoConflictFinderConfig${autoConflictBound.let{"($it)"}})..."
     )
     val stream = javaClass.getResourceAsStream(program)
-    val xcfa =
-      getXcfaFromC(stream!!, ParseContext(), false, property, NullLogger.getInstance()).first
+    val parseContext = ParseContext()
+    val xcfa = getXcfaFromC(stream!!, parseContext, false, property, NullLogger.getInstance()).first
 
     val ocChecker =
       XcfaOcChecker(
         xcfa = xcfa,
-        property = property.verifiedProperty,
+        property = property,
+        parseContext = parseContext,
         decisionProcedure = decisionProcedure,
-        smtSolver = "Z3:4.13",
+        solverFactory = SolverManager.resolveSolverFactory("Z3:new"),
         logger = NullLogger.getInstance(),
-        conflictInput = null,
         outputConflictClauses = false,
-        nonPermissiveValidation = false,
         autoConflictConfig = autoConflictFinderConfig,
         autoConflictBound = autoConflictBound ?: -1,
       )
 
     val safetyResult = ocChecker.check(null)
     Assertions.assertTrue(verdict(safetyResult))
+  }
+
+  private fun check(
+    program: String,
+    property: XcfaProperty,
+    decisionProcedure: OcDecisionProcedureType,
+    maxExitQueries: Int = -1,
+    forceUnrollBoundEnd: Int = -1,
+    arithmetic: ArithmeticType = ArithmeticType.efficient,
+    memoryModel: MemoryModelType = MemoryModelType.multi,
+  ): SafetyResult<*, *> {
+    val stream = javaClass.getResourceAsStream(program)
+    val parseContext = ParseContext()
+    parseContext.arithmetic = arithmetic
+    parseContext.memoryModel = memoryModel
+    // As the CLI runs the OC checker: without LBE, which would merge the atomic units races are
+    // detected between.
+    val lbeLevel = LbePass.defaultLevel
+    LbePass.defaultLevel = LbePass.LbeLevel.NO_LBE
+    val xcfa =
+      try {
+        getXcfaFromC(stream!!, parseContext, false, property, NullLogger.getInstance()).first
+      } finally {
+        LbePass.defaultLevel = lbeLevel
+      }
+    return XcfaOcChecker(
+        xcfa = xcfa,
+        property = property,
+        parseContext = parseContext,
+        decisionProcedure = decisionProcedure,
+        solverFactory = SolverManager.resolveSolverFactory("Z3:new"),
+        logger = NullLogger.getInstance(),
+        outputConflictClauses = false,
+        autoConflictConfig = AutoConflictFinderConfig.NONE,
+        autoConflictBound = -1,
+        forceUnrollBoundEnd = forceUnrollBoundEnd,
+        maxExitQueries = maxExitQueries,
+      )
+      .check(null)
+  }
+
+  @ParameterizedTest
+  @MethodSource("unrollData")
+  fun testUnrollExits(
+    program: String,
+    decisionProcedure: OcDecisionProcedureType,
+    verdict: (SafetyResult<*, *>) -> Boolean,
+  ) {
+    println("Testing $program with $decisionProcedure...")
+    Assertions.assertTrue(verdict(check(program, property, decisionProcedure)))
+  }
+
+  @ParameterizedTest
+  @MethodSource("dataRaceData")
+  fun testIdlDataRace(program: String, verdict: (SafetyResult<*, *>) -> Boolean) {
+    println("Testing $program for data races with IDL...")
+    val property = XcfaProperty(ErrorDetection.DATA_RACE)
+    Assertions.assertTrue(verdict(check(program, property, OcDecisionProcedureType.IDL)))
+  }
+
+  @Test
+  fun testBitvectorStartArgumentWidth() {
+    val property = XcfaProperty(ErrorDetection.DATA_RACE)
+    val result =
+      check(
+        "/35start_arg_width_race.c",
+        property,
+        OcDecisionProcedureType.IDL,
+        arithmetic = ArithmeticType.bitvector,
+      )
+    Assertions.assertTrue(result.isUnsafe)
+  }
+
+  /** The owners of mutexes on the heap are kept in an array, or under flat in ghost memory. */
+  @ParameterizedTest
+  @CsvSource(
+    "/40heap_mutex_norace.c,false,true",
+    "/40heap_mutex_norace.c,true,true",
+    "/41heap_mutex_race.c,false,false",
+    "/41heap_mutex_race.c,true,false",
+  )
+  fun testHeapMutexesUnderFlat(program: String, inMemory: Boolean, safe: Boolean) {
+    val property = XcfaProperty(ErrorDetection.DATA_RACE)
+    val enabled = PtrSizeToMemoryPass.mutexesEnabled
+    val result =
+      try {
+        PtrSizeToMemoryPass.mutexesEnabled = inMemory
+        check(program, property, OcDecisionProcedureType.IDL, memoryModel = MemoryModelType.flat)
+      } finally {
+        PtrSizeToMemoryPass.mutexesEnabled = enabled
+      }
+    Assertions.assertEquals(safe, result.isSafe)
+    Assertions.assertEquals(!safe, result.isUnsafe)
+  }
+
+  /** The value analysis evaluates a compare-and-swap by its branches. */
+  @ParameterizedTest
+  @CsvSource(
+    "/42cas_index_unsafe.c,flat,false",
+    "/42cas_index_unsafe.c,multi,false",
+    "/43cas_index_safe.c,flat,true",
+    "/43cas_index_safe.c,multi,true",
+  )
+  fun testCompareAndSwapAddress(program: String, memoryModel: MemoryModelType, safe: Boolean) {
+    val result = check(program, property, OcDecisionProcedureType.IDL, memoryModel = memoryModel)
+    Assertions.assertEquals(safe, result.isSafe)
+    Assertions.assertEquals(!safe, result.isUnsafe)
+  }
+
+  @Test
+  fun testThreadLocalAggregateUnsupported() {
+    Assertions.assertThrows(UnsupportedFrontendElementException::class.java) {
+      check("/32thread_local_aggregate.c", property, OcDecisionProcedureType.IDL)
+    }
+  }
+
+  @Test
+  fun testNoExitQueries() {
+    // without exit queries, a force-unrolled loop never yields a safe verdict
+    Assertions.assertThrows(NotSolvableException::class.java) {
+      check("/13loop_bound_safe.c", property, OcDecisionProcedureType.IDL, 0, 4)
+    }
+  }
+
+  @Test
+  fun testSingleExitQuery() {
+    val result = check("/15sequential_loops_safe.c", property, OcDecisionProcedureType.IDL, 1)
+    Assertions.assertTrue(result.isSafe)
   }
 }
