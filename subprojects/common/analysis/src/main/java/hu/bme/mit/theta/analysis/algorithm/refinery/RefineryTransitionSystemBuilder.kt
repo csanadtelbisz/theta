@@ -15,16 +15,16 @@
  */
 package hu.bme.mit.theta.analysis.algorithm.refinery
 
+import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryTransitionRuleBuilder.Companion.UNSUPPORTED_FEATURE
 import hu.bme.mit.theta.core.decl.Decl
 import hu.bme.mit.theta.core.type.Type
 import hu.bme.mit.theta.core.type.booltype.BoolType
 import hu.bme.mit.theta.core.type.inttype.IntType
+import java.math.BigInteger
 
 abstract class RefineryTransitionSystemBuilder {
 
   companion object {
-
-    const val ENVIRONMENT = "env"
 
     val String.refinerified: String
       get() = replace("::", "__")
@@ -46,12 +46,25 @@ abstract class RefineryTransitionSystemBuilder {
     """
     |import builtin::strategy.
     |
+    |pred $UNSUPPORTED_FEATURE().
+    |!$UNSUPPORTED_FEATURE().
+    |pred invalidDeref().
+    |!invalidDeref().
+    |pred invalidFree().
+    |!invalidFree().
+    |pred invalidMemtrack().
+    |!invalidMemtrack().
+    |
     |class MemoryRegion {
     |    int address
     |    contains MemoryObject[] parts
     |    int size
-    |    boolean valid
+    |    int dataType
     |}
+    |
+    |pred valid(MemoryRegion region).
+    |pred interpreted(MemoryRegion region).
+    |default !interpreted(*).
     |
     |abstract class Pointable.
     |
@@ -74,6 +87,8 @@ abstract class RefineryTransitionSystemBuilder {
     |
     |class NullPointer extends AbstractPointer.
     |
+    |class ConstantPointer extends AbstractPointer.
+    |
     |class NamedPointer {
     |    contains Pointer pointer
     |}
@@ -84,21 +99,11 @@ abstract class RefineryTransitionSystemBuilder {
 
   protected open val environmentDeclarations: List<String>
     get() =
-      listOf("int next_address", "contains NamedPointer[] pointers") +
-        variables.map { "${it.type.refineryType} ${it.name.refinerified}" }
+      listOf("int next_address().") +
+        variables.map { "${it.type.refineryType} ${it.name.refinerified}()." }
 
   protected open val environmentSetup: String
-    get() =
-      """
-    |class Environment {
-    |    ${environmentDeclarations.joinToString("\n    ")}
-    |}
-    |
-    |Environment($ENVIRONMENT).
-    |atom $ENVIRONMENT.
-    |scope Environment += 0.
-    """
-        .trimMargin()
+    get() = environmentDeclarations.joinToString("\n")
 
   protected val invalidMemorySetup: String
     get() =
@@ -117,8 +122,18 @@ abstract class RefineryTransitionSystemBuilder {
 
   // Initial state
 
+  /** The value of the allocation counter before the first allocation. */
+  protected abstract val initialNextAddress: BigInteger
+
   protected open val initialStateDeclarations: List<String>
-    get() = listOf("!exists(MemoryRegion::new).", "next_address($ENVIRONMENT): 1.")
+    get() =
+      listOf(
+        "scope MemoryRegion += 0.",
+        "scope ConstantPointer += 0.",
+        "scope Value += 0.",
+        "scope Pointer += 0.",
+        "next_address(): $initialNextAddress.",
+      )
 
   protected val initialState: String
     get() = initialStateDeclarations.joinToString("\n")
@@ -132,13 +147,14 @@ abstract class RefineryTransitionSystemBuilder {
 
   // Error property
 
-  protected abstract val targetProperty: String
+  /** The violations of the verified property; reaching an unsupported feature always stops too. */
+  protected abstract val targetProperties: List<String>
 
   protected val targetDeclaration: String
     get() =
       """
       |@target
-      |pred error_property() <-> $targetProperty.
+      |pred error_property() <-> ${(listOf("$UNSUPPORTED_FEATURE()") + targetProperties).joinToString(" ; ")}.
       """
         .trimMargin()
 

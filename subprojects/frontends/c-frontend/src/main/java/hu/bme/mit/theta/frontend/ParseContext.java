@@ -21,6 +21,7 @@ import hu.bme.mit.theta.frontend.transformation.ArchitectureConfig.ArithmeticTyp
 import hu.bme.mit.theta.frontend.transformation.ArchitectureConfig.MemoryModelType;
 import hu.bme.mit.theta.frontend.transformation.CStmtCounter;
 import hu.bme.mit.theta.frontend.transformation.grammar.preprocess.ArithmeticTrait;
+import hu.bme.mit.theta.frontend.transformation.model.types.complex.CComplexType;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.compound.CArray;
 import hu.bme.mit.theta.frontend.transformation.model.types.complex.compound.CStruct;
 import java.math.BigInteger;
@@ -119,6 +120,7 @@ public class ParseContext {
     // Compile-time base ids of global objects, mapped to the object they are a part of (if any).
     private final Map<BigInteger, BigInteger> staticObjectParents = new LinkedHashMap<>();
     private final Set<BigInteger> staticUnions = new LinkedHashSet<>();
+    private final Map<BigInteger, CComplexType> staticObjectTypes = new LinkedHashMap<>();
 
     private final FlatAddressSpace flatAddressSpace = new FlatAddressSpace();
     // ghost memory base -> the value of its cells that nothing wrote
@@ -389,6 +391,16 @@ public class ParseContext {
 
     public boolean isStaticObject(BigInteger base) {
         return staticObjectParents.containsKey(base);
+    }
+
+    /** Records the C type of the global object with compile-time base id [base]. */
+    public void recordStaticObjectType(BigInteger base, CComplexType type) {
+        staticObjectTypes.put(base, type);
+    }
+
+    /** The C type of every global object, keyed by its compile-time base id. */
+    public Map<BigInteger, CComplexType> getStaticObjectTypes() {
+        return Collections.unmodifiableMap(staticObjectTypes);
     }
 
     /** Records that member [member] of [type] is accessed somewhere in the program. */

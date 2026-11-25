@@ -24,7 +24,7 @@ import java.math.BigInteger
 import java.util.*
 
 class MemoryAllocationExpr<T : Type>(
-  val size: BigInteger, // in bytes
+  val size: BigInteger?, // in bytes, null if not a constant
   val kType: T,
 ) : NullaryExpr<T>(), LitExpr<T> {
 

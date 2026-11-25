@@ -122,10 +122,26 @@ private fun XcfaBuilder.allocationSeed(parseContext: ParseContext): String {
   if (parseContext.memoryModel.flatAddressing()) {
     return parseContext.flatAddressSpace.end().toString()
   }
-  val limit = (metaData[ALLOCATION_STATIC_BASE_LIMIT] as? Int) ?: 0
-  return (((limit + POINTER_BASE_CLASSES - 1) / POINTER_BASE_CLASSES) * POINTER_BASE_CLASSES)
-    .toString()
+  return multiAllocationSeed((metaData[ALLOCATION_STATIC_BASE_LIMIT] as? Int) ?: 0).toString()
 }
+
+/**
+ * The multi-model allocation counter's start for a static base high-water mark of [limit]: the
+ * smallest multiple of [POINTER_BASE_CLASSES] at or above it. Each allocation first adds
+ * [POINTER_BASE_CLASSES], then hands out the counter.
+ */
+fun multiAllocationSeed(limit: Int): Int =
+  ((limit + POINTER_BASE_CLASSES - 1) / POINTER_BASE_CLASSES) * POINTER_BASE_CLASSES
+
+/**
+ * The static base high-water mark of a program whose global objects have the compile-time bases
+ * [staticBases]: the first one the frontend's counter did not hand out.
+ */
+fun staticBaseLimit(staticBases: Collection<Int>): Int =
+  staticBases.maxOrNull()?.plus(POINTER_BASE_CLASSES) ?: FIRST_STATIC_BASE
+
+/** The first compile-time base id the frontend hands out (the `3k+1` class). */
+const val FIRST_STATIC_BASE = 1
 
 /**
  * Creates the shared allocation counter and seeds it in the init procedure, once per XCFA. Does

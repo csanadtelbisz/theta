@@ -89,7 +89,9 @@ import hu.bme.mit.theta.xcfa.passes.memory.FlatMemoryPass
 import hu.bme.mit.theta.xcfa.passes.memory.UnsupportedPointerSplitException
 import hu.bme.mit.theta.xcfa.utils.ALLOCATION_STATIC_BASE_LIMIT
 import hu.bme.mit.theta.xcfa.utils.AssignStmtLabel
+import hu.bme.mit.theta.xcfa.utils.FIRST_STATIC_BASE
 import hu.bme.mit.theta.xcfa.utils.HavocStmtLabel
+import hu.bme.mit.theta.xcfa.utils.POINTER_BASE_CLASSES
 import hu.bme.mit.theta.xcfa.utils.SubObjects
 import hu.bme.mit.theta.xcfa.utils.asConstantBigInteger
 import hu.bme.mit.theta.xcfa.utils.dereferences
@@ -107,9 +109,9 @@ class FrontendXcfaBuilder(
   // Counts up, uses 3k+1 -- compile-time bases, for single-instance globals. Read through [ptrCnt],
   // which hands out the current value and advances; read directly only to report the high-water
   // mark to the allocation counter (see [ALLOCATION_STATIC_BASE_LIMIT]).
-  private var staticBaseCursor = 1
+  private var staticBaseCursor = FIRST_STATIC_BASE
   private val ptrCnt: Int
-    get() = staticBaseCursor.also { staticBaseCursor += 3 }
+    get() = staticBaseCursor.also { staticBaseCursor += POINTER_BASE_CLASSES }
 
   // The compile-time base each global object's expression was given, keyed by identity.
   private val staticObjectBases = IdentityHashMap<Expr<*>, Int>()
@@ -642,6 +644,7 @@ class FrontendXcfaBuilder(
       type is CStruct && type.isUnion,
       parent?.let { BigInteger.valueOf(it.first.toLong()) },
     )
+    parseContext.recordStaticObjectType(BigInteger.valueOf(base.toLong()), type)
     recordObjectAtomicity(base, type)
     val unit = parent?.second
     if (unit != null && !parseContext.memoryModel.byteAddressed()) {

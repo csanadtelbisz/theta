@@ -25,6 +25,7 @@ import hu.bme.mit.theta.analysis.unit.UnitPrec
 import hu.bme.mit.theta.common.logging.Logger
 import tools.refinery.generator.standalone.StandaloneRefinery
 import tools.refinery.language.semantics.ModelInitializer
+import tools.refinery.logic.term.truthvalue.TruthValue
 import tools.refinery.store.dse.modification.ModificationAdapter
 import tools.refinery.store.dse.propagation.PropagationAdapter
 import tools.refinery.store.dse.transition.DesignSpaceExplorationAdapter
@@ -34,6 +35,8 @@ import tools.refinery.store.query.ModelQueryAdapter
 import tools.refinery.store.query.interpreter.QueryInterpreterAdapter
 import tools.refinery.store.reasoning.ReasoningAdapter
 import tools.refinery.store.reasoning.ReasoningStoreAdapter
+import tools.refinery.store.reasoning.literal.Concreteness
+import tools.refinery.store.tuple.Tuple
 import tools.refinery.store.statecoding.StateCoderAdapter
 import tools.refinery.store.transition.system.TransitionSystemAdapter
 import tools.refinery.store.transition.system.statespace.Trace as RefineryTrace
@@ -46,9 +49,7 @@ class RefineryChecker(
   private val logger: Logger,
 ) : SafetyChecker<Proof, Trace<out State, out Action>, UnitPrec> {
 
-  override fun check(
-    input: UnitPrec?
-  ): SafetyResult<Proof, Trace<out State, out Action>> {
+  override fun check(input: UnitPrec?): SafetyResult<Proof, Trace<out State, out Action>> {
     val problem = StandaloneRefinery.getProblemLoader().loadString(problemString)
     val initializer = StandaloneRefinery.getInstance(ModelInitializer::class.java)
     initializer.readProblem(problem)
@@ -62,13 +63,13 @@ class RefineryChecker(
         .with(DesignSpaceExplorationAdapter.builder())
         .with(ReasoningAdapter.builder())
         .with(TransitionSystemAdapter.builder())
-        .with(
-          ModelVisualizerAdapter.builder()
-            .withOutputPath("test_output")
-            .withFormat(FileFormat.SVG)
-            .saveStates()
-            .saveDesignSpace()
-        )
+//        .with(
+//          ModelVisualizerAdapter.builder()
+//            .withOutputPath("test_output")
+//            .withFormat(FileFormat.SVG)
+//            .saveStates()
+//            .saveDesignSpace()
+//        )
 
     initializer.configureStoreBuilder(storeBuilder)
     val store = storeBuilder.build()
@@ -85,9 +86,9 @@ class RefineryChecker(
           val manager = TransitionSystemStoreManager(store)
           manager.startExploration(initialVersion)
 
-          val visualizerAdapter = model.getAdapter(ModelVisualizerAdapter::class.java)
-          val stateSpaceStore = store.getAdapter(DesignSpaceExplorationStoreAdapter::class.java).stateSpaceStore
-          visualizerAdapter.visualize(stateSpaceStore, true)
+//          val visualizerAdapter = model.getAdapter(ModelVisualizerAdapter::class.java)
+//          val stateSpaceStore = store.getAdapter(DesignSpaceExplorationStoreAdapter::class.java).stateSpaceStore
+//          visualizerAdapter.visualize(stateSpaceStore, true)
 
           manager.solution
         }
@@ -95,6 +96,22 @@ class RefineryChecker(
     if (solution == null) {
       logger.writeln(Logger.Level.RESULT, "Refinery found no reachable target state.")
       return SafetyResult.safe(RefineryProof())
+    }
+
+    val unsupportedFeature =
+      initializer.problemTrace.getPartialRelation(RefineryTransitionRuleBuilder.UNSUPPORTED_FEATURE)
+    val lastState = solution.states().last().version()
+    val unsupported =
+      store.createModelForState(lastState).use { model ->
+        model
+          .getAdapter(ReasoningAdapter::class.java)
+          .getPartialInterpretation(Concreteness.PARTIAL, unsupportedFeature)
+          .get(Tuple.of())
+      }
+    if (unsupported != TruthValue.FALSE) {
+      throw UnsupportedOperationException(
+        "The Refinery exploration reached a feature the encoding does not support."
+      )
     }
 
     val trace = solution.toTrace()

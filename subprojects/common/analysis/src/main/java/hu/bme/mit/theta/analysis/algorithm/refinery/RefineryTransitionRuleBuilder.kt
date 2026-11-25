@@ -17,7 +17,6 @@ package hu.bme.mit.theta.analysis.algorithm.refinery
 
 import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryTransitionRuleBuilder.RefineryExpr.ExprType.NON_POINTER
 import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryTransitionRuleBuilder.RefineryExpr.ExprType.POINTER
-import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryTransitionSystemBuilder.Companion.ENVIRONMENT
 import hu.bme.mit.theta.analysis.algorithm.refinery.RefineryTransitionSystemBuilder.Companion.refinerified
 import hu.bme.mit.theta.core.decl.Decl
 import hu.bme.mit.theta.core.stmt.*
@@ -31,12 +30,16 @@ import hu.bme.mit.theta.core.type.anytype.Dereference
 import hu.bme.mit.theta.core.type.anytype.IteExpr
 import hu.bme.mit.theta.core.type.anytype.RefExpr
 import hu.bme.mit.theta.core.type.booltype.AndExpr
+import hu.bme.mit.theta.core.type.booltype.BoolExprs.And
 import hu.bme.mit.theta.core.type.booltype.BoolExprs.Not
+import hu.bme.mit.theta.core.type.booltype.BoolExprs.Or
 import hu.bme.mit.theta.core.type.booltype.BoolLitExpr
 import hu.bme.mit.theta.core.type.booltype.NotExpr
 import hu.bme.mit.theta.core.type.booltype.OrExpr
 import hu.bme.mit.theta.core.type.inttype.IntExprs.Int
 import hu.bme.mit.theta.core.type.inttype.IntLitExpr
+import java.math.BigInteger
+import java.util.IdentityHashMap
 
 data class RefineryRule(
   val name: String,
@@ -62,16 +65,311 @@ data class RefineryRule(
       .trimMargin()
 }
 
+/** A C object type as laid out in Refinery: [id] tells types apart, [sizeBytes] is its `sizeof`. */
+data class RefineryObjectType(val id: String, val sizeBytes: BigInteger, val cell: RefineryCell)
+
+/** The memory part holding one object of a [RefineryObjectType]. */
+sealed interface RefineryCell {
+
+  val className: String
+
+  data object Value : RefineryCell {
+    override val className = "Value"
+  }
+
+  data object Pointer : RefineryCell {
+    override val className = "Pointer"
+  }
+
+  /**
+   * A struct or array stored by value: the part points to a sub-object region of [members]. A
+   * pointer into an array's region has the element type, so that is the region's type then.
+   */
+  data class SubObject(val members: List<RefineryObjectType>, val isArray: Boolean) : RefineryCell {
+    override val className = "Pointer"
+
+    init {
+      check(members.isNotEmpty()) { "A sub-object must have at least one member." }
+    }
+  }
+}
+
+/**
+ * A global object at a compile-time address: [count] consecutive objects of [pointee], the type a
+ * pointer into it has (a struct's own type, or an array's element type).
+ */
+data class RefineryStaticObject(val pointee: RefineryObjectType, val count: Int)
+
+/** The C type of a pointer-valued expression, as far as the memory it points to is concerned. */
+sealed interface RefineryPointerType {
+
+  data object NotPointer : RefineryPointerType
+
+  /** `void *` or a null pointer constant: the pointed memory gets no type from it. */
+  data object Untyped : RefineryPointerType
+
+  data class Typed(val pointee: RefineryObjectType) : RefineryPointerType
+}
+
+/**
+ * Builds Refinery transition rules from statements. Memory regions are created untyped by an
+ * allocation and get their parts once a typed pointer first points into them: subclasses supply
+ * the C types through [pointerTypeOf].
+ *
+ * Global objects are regions of the initial state at their compile-time addresses
+ * ([staticObjects]); such an address literal denotes a constant pointer to the region. Each new
+ * region takes the address `next_address + addressStep` and advances `next_address` by
+ * [addressStep], as the allocation counter of the other analyses does.
+ */
 abstract class RefineryTransitionRuleBuilder<T>(
   protected val variables: MutableSet<Decl<*>>,
   protected val pointers: Set<Decl<*>>,
+  private val allocationSizes: Set<BigInteger>,
+  private val staticObjects: Map<BigInteger, RefineryStaticObject>,
+  private val addressStep: Int,
 ) {
 
   companion object {
 
     val supportedOperators =
       setOf("+", "-", "*", "/", "==", "!=", "<", "<=", ">", ">=", "!", "&&", "||")
+
+    const val UNSUPPORTED_FEATURE = "unsupportedFeature"
+
+    /** The `InvalidMemory` atom: the target of a null or not yet written pointer. */
+    const val INVALID_MEMORY = "null"
+
+    private const val UNSUPPORTED_ACTION = "$UNSUPPORTED_FEATURE()"
+
+    /** Larger regions would need a transition rule with as many new objects as parts. */
+    private const val MAX_INTERPRETED_PARTS = 64
   }
+
+  /** The C type of the pointer [expr], or [RefineryPointerType.NotPointer] for other values. */
+  protected abstract fun pointerTypeOf(expr: Expr<*>): RefineryPointerType
+
+  private val typeIds = mutableMapOf<String, Int>()
+
+  private fun typeId(type: RefineryObjectType): Int = typeIds.getOrPut(type.id) { typeIds.size }
+
+  /**
+   * The parts of a [size]-byte region a [type] pointer points to, or null if unsupported. A pointer
+   * to a struct indexes its members, so only a single struct is supported.
+   */
+  private fun regionParts(size: BigInteger, type: RefineryObjectType): List<RefineryObjectType>? {
+    if (size.signum() <= 0 || type.sizeBytes.signum() <= 0) return null
+    val (count, remainder) = size.divideAndRemainder(type.sizeBytes)
+    if (remainder.signum() != 0 || count > BigInteger.valueOf(MAX_INTERPRETED_PARTS.toLong())) {
+      return null
+    }
+    return when (val cell = type.cell) {
+      is RefineryCell.SubObject -> if (count == BigInteger.ONE) cell.members else null
+      else -> List(count.toInt()) { type }
+    }
+  }
+
+  /** The address of the [index]th region a rule creates (counting from 1). */
+  private fun newRegionAddress(index: Int): String =
+    "next_address() + ${addressStep * index}"
+
+  /** The constant pointer an address literal of a global object denotes. */
+  protected fun staticPointer(address: BigInteger): String = "static_pointer_$address"
+
+  /** The initial-state assertions of the global objects' regions. */
+  fun staticObjectDeclarations(): List<String> =
+    staticObjects.flatMap { (address, obj) ->
+      val region = "static_region_$address"
+      val partTypes =
+        when (val cell = obj.pointee.cell) {
+          is RefineryCell.SubObject ->
+            if (obj.count == 1 && !cell.isArray) cell.members
+            else error("Unsupported global object layout at $address: ${obj.pointee.id}")
+          else -> List(obj.count) { obj.pointee }
+        }
+      // Aggregate members are global objects of their own, the initialization points the cell to it.
+      val parts =
+        partTypes.flatMapIndexed { offset, type ->
+          val part = "static_part_${address}_$offset"
+          listOf(
+            "atom $part.",
+            "${type.cell.className}($part).",
+            *(if (type.cell is RefineryCell.Pointer) arrayOf("target($part, $INVALID_MEMORY).")
+            else arrayOf()),
+            "parts($region, $part).",
+            "offset($part): $offset.",
+          )
+        }
+      listOf(
+        "atom $region.",
+        "MemoryRegion($region).",
+        "MemoryRegion::address($region): $address.",
+        "MemoryRegion::size($region): ${obj.pointee.sizeBytes * BigInteger.valueOf(obj.count.toLong())}.",
+        "valid($region).",
+        "interpreted($region).",
+        "dataType($region): ${typeId(obj.pointee)}.",
+      ) +
+        parts +
+        listOf(
+          "atom ${staticPointer(address)}.",
+          "ConstantPointer(${staticPointer(address)}).",
+          "target(${staticPointer(address)}, static_part_${address}_0).",
+        )
+    }
+
+  /** Collects the new objects and actions that create the parts of uninterpreted regions. */
+  private inner class RegionInterpreter(private var newRegions: Int) {
+    val parameters = mutableListOf<Pair<String, String>>()
+    val actions = mutableListOf<String>()
+    private var counter = 0
+
+    /**
+     * Fills [region] of a [type] pointer with [parts] and returns the offset-0 part. An existing
+     * [base] part is reused at offset 0 and only gets its class.
+     */
+    fun interpret(
+      region: String,
+      type: RefineryObjectType,
+      parts: List<RefineryObjectType>,
+      base: String?,
+    ): String = fill(region, type, parts, base)
+
+    val addressActions: List<String>
+      get() =
+        if (newRegions == 0) listOf()
+        else listOf("next_address(): ${newRegionAddress(newRegions)}")
+
+    private fun fill(
+      region: String,
+      regionType: RefineryObjectType,
+      parts: List<RefineryObjectType>,
+      base: String?,
+    ): String {
+      actions += "interpreted($region)"
+      actions += "dataType($region): ${typeId(regionType)}"
+      return parts
+        .mapIndexed { offset, type ->
+          val part =
+            if (offset == 0 && base != null) base.also { actions += "${type.cell.className}($it)" }
+            else "part_${counter++}".also { parameters += "@new ${type.cell.className}" to it }
+          actions += "parts($region, $part)"
+          actions += "offset($part): $offset"
+          val cell = type.cell
+          if (cell is RefineryCell.SubObject) {
+            val subRegion = "sub_region_${counter++}"
+            parameters += "@new MemoryRegion" to subRegion
+            actions +=
+              listOf(
+                "MemoryRegion::address($subRegion): ${newRegionAddress(++newRegions)}",
+                "MemoryRegion::size($subRegion): ${type.sizeBytes}",
+                "valid($subRegion)",
+              )
+            val subType = if (cell.isArray) cell.members.first() else type
+            actions += "target($part, ${fill(subRegion, subType, cell.members, null)})"
+          } else if (cell is RefineryCell.Pointer) {
+            // An unknown target would let every later store enumerate each node as the old one.
+            actions += "target($part, $INVALID_MEMORY)"
+          }
+          part
+        }
+        .first()
+    }
+  }
+
+  /** One way of storing a pointer, with the region instrumentation it needs. */
+  private data class StoreVariant(
+    val parameters: List<Pair<String, String>> = listOf(),
+    val preconditions: Set<String> = setOf(),
+    val actions: List<String> = listOf(),
+    val retarget: Boolean = true,
+  )
+
+  /**
+   * The variants of storing a pointer to [target] from a [source]-typed pointer into a
+   * [destination]-typed one. Storing an untyped pointer into a typed one interprets the region the
+   * first time; a region already interpreted with another type is an unsupported reinterpretation.
+   */
+  private fun storeVariants(
+    destination: Expr<*>,
+    source: Expr<*>,
+    target: String,
+  ): List<StoreVariant> {
+    val destinationType = pointerTypeOf(destination)
+    check(destinationType != RefineryPointerType.NotPointer) {
+      "Pointer stored into non-pointer $destination."
+    }
+    if (destinationType !is RefineryPointerType.Typed) return listOf(StoreVariant())
+    val type = destinationType.pointee
+    when (val sourceType = pointerTypeOf(source)) {
+      is RefineryPointerType.Typed -> {
+        check(sourceType.pointee.id == type.id) {
+          "Unsupported pointer conversion from $source to $destination: memory reinterpretation is not supported."
+        }
+        return listOf(StoreVariant())
+      }
+      RefineryPointerType.NotPointer -> error("Non-pointer $source stored as a pointer.")
+      RefineryPointerType.Untyped -> {}
+    }
+
+    val region = "stored_region"
+    val regionParameter = listOf("MemoryRegion" to region)
+    val inRegion = setOf("parts($region, $target)")
+    val interpreted = inRegion + "interpreted($region)"
+    val uninterpreted = inRegion + "!interpreted($region)"
+    val id = typeId(type)
+    val unsupported = { preconditions: Set<String> ->
+      StoreVariant(regionParameter, preconditions, listOf(UNSUPPORTED_ACTION), retarget = false)
+    }
+    return buildList {
+      add(StoreVariant(preconditions = setOf("!parts(_, $target)")))
+      add(StoreVariant(regionParameter, interpreted + "dataType($region) == $id"))
+      add(unsupported(interpreted + "dataType($region) != $id"))
+      for (size in allocationSizes) {
+        val sized = uninterpreted + "MemoryRegion::size($region) == $size"
+        val parts = regionParts(size, type)
+        if (parts == null) {
+          add(unsupported(sized))
+        } else {
+          val interpreter = RegionInterpreter(0)
+          interpreter.interpret(region, type, parts, target)
+          add(
+            StoreVariant(
+              regionParameter + interpreter.parameters,
+              sized,
+              interpreter.actions + interpreter.addressActions,
+            )
+          )
+        }
+      }
+      add(unsupported(uninterpreted + allocationSizes.map { "MemoryRegion::size($region) != $it" }))
+    }
+  }
+
+  private fun storeRules(
+    pointer: String,
+    target: String,
+    parameters: List<Pair<String, String>>,
+    preConditionClauses: Set<String>,
+    variant: StoreVariant,
+    mayBeUnset: Boolean,
+  ): Set<SingleRefineryRule> =
+    if (variant.retarget) {
+      retargetRules(
+        pointer = pointer,
+        newTarget = target,
+        parameters = parameters + variant.parameters,
+        preConditionClauses = preConditionClauses + variant.preconditions,
+        otherActions = variant.actions,
+        mayBeUnset = mayBeUnset,
+      )
+    } else {
+      setOf(
+        SingleRefineryRule(
+          parameters = parameters + variant.parameters,
+          preConditionClauses = preConditionClauses + variant.preconditions,
+          actionLiterals = variant.actions,
+        )
+      )
+    }
 
   private var dereferenceCounter: Int = 0
   private var pointerArithmeticCounter: Int = 0
@@ -170,6 +468,11 @@ abstract class RefineryTransitionRuleBuilder<T>(
     val preConditionClauses: Set<String>,
     val expr: String,
     val parameters: Set<Pair<String, String>> = setOf(),
+    /**
+     * A node comparison, or a condition built from one: Refinery accepts it only as a precondition
+     * literal, never inside a term or as a value.
+     */
+    val conditionOnly: Boolean = false,
   ) {
 
     enum class ExprType {
@@ -222,6 +525,8 @@ abstract class RefineryTransitionRuleBuilder<T>(
   abstract fun build(transition: T): Set<RefineryRule>
 
   protected fun Stmt.toRules(): RefineryRuleBlock {
+    // Variable names are only unique within one statement's rule.
+    clauseCache.clear()
     dereferenceCounter = 0
     pointerArithmeticCounter = 0
     pointerComparisonCounter = 0
@@ -239,32 +544,11 @@ abstract class RefineryTransitionRuleBuilder<T>(
 
   private fun AssignStmt<*>.toRules(): RefineryRuleBlock {
     val name = varDecl.name.refinerified
-    val env = "env"
     return if (varDecl in pointers) {
       val pointer = "pointer_$name"
       val commonPreconditions = mutableSetOf("pointer($name, $pointer)")
       if (expr is MemoryAllocationExpr<*>) {
-        val expr = expr as MemoryAllocationExpr<*>
-        val region = "allocated_region"
-        val base = "allocated_base"
-
-        retargetRules(
-            pointer = pointer,
-            newTarget = base,
-            parameters =
-              listOf("Pointer" to pointer, "@new MemoryRegion" to region, "@new MemoryObject" to base),
-            preConditionClauses = commonPreconditions,
-            otherActions =
-              listOf(
-                "MemoryRegion::address($region): next_address($env)",
-                "MemoryRegion::size($region): ${expr.size}",
-                "valid($region)",
-                "next_address($ENVIRONMENT): next_address($ENVIRONMENT) + 1",
-                "parts($region, $base)",
-                "offset($base): 0",
-              ),
-          )
-          .single()
+        allocationRule(varDecl.ref, pointer, commonPreconditions, (expr as MemoryAllocationExpr<*>).size)
       } else {
         NondetRefineryRuleBlock(
           expr
@@ -272,12 +556,16 @@ abstract class RefineryTransitionRuleBuilder<T>(
             .flatMap { (_, preconditions, pointerExpr, _) ->
               val target = "target"
               val preconditionsPointer = listOf("target($pointerExpr, $target)")
-              retargetRules(
-                pointer = pointer,
-                newTarget = target,
-                parameters = listOf("Pointer" to pointer, "Pointable" to target),
-                preConditionClauses = commonPreconditions + preconditions + preconditionsPointer,
-              )
+              storeVariants(varDecl.ref, expr, target).flatMap { variant ->
+                storeRules(
+                  pointer = pointer,
+                  target = target,
+                  parameters = listOf("Pointer" to pointer, "Pointable" to target),
+                  preConditionClauses = commonPreconditions + preconditions + preconditionsPointer,
+                  variant = variant,
+                  mayBeUnset = false,
+                )
+              }
             }
             .toSet()
         )
@@ -302,17 +590,69 @@ abstract class RefineryTransitionRuleBuilder<T>(
         variables.add(varDecl)
         NondetRefineryRuleBlock(
           expr
-            .getNonPointerExpr(this)
+            .getTermExpr(this)
             .map { (_, preconditions, expr, _) ->
               SingleRefineryRule(
                 preConditionClauses = preconditions,
-                actionLiterals = listOf("$name(env): $expr"),
+                actionLiterals = listOf("$name(): $expr"),
               )
             }
             .toSet()
         )
       }
     }
+  }
+
+  /**
+   * Allocates a region of [size] bytes for [pointerExpr]. A typed pointer gets the region's parts at
+   * once; an untyped one gets a single base part of yet unknown class.
+   */
+  private fun allocationRule(
+    pointerExpr: Expr<*>,
+    pointer: String,
+    commonPreconditions: Set<String>,
+    size: BigInteger?,
+  ): RefineryRuleBlock {
+    if (size == null) return SingleRefineryRule(actionLiterals = listOf(UNSUPPORTED_ACTION))
+    val region = "allocated_region"
+    val regionActions =
+      listOf(
+        "MemoryRegion::address($region): ${newRegionAddress(1)}",
+        "MemoryRegion::size($region): $size",
+        "valid($region)",
+      )
+    val parameters = listOf("Pointer" to pointer, "@new MemoryRegion" to region)
+    val type = pointerTypeOf(pointerExpr)
+    if (type !is RefineryPointerType.Typed) {
+      val base = "allocated_base"
+      return retargetRules(
+          pointer = pointer,
+          newTarget = base,
+          parameters = parameters + ("@new MemoryObject" to base),
+          preConditionClauses = commonPreconditions,
+          otherActions =
+            regionActions +
+              listOf(
+                "next_address(): ${newRegionAddress(1)}",
+                "parts($region, $base)",
+                "offset($base): 0",
+              ),
+        )
+        .single()
+    }
+    val parts =
+      regionParts(size, type.pointee)
+        ?: return SingleRefineryRule(actionLiterals = listOf(UNSUPPORTED_ACTION))
+    val interpreter = RegionInterpreter(1)
+    val base = interpreter.interpret(region, type.pointee, parts, null)
+    return retargetRules(
+        pointer = pointer,
+        newTarget = base,
+        parameters = parameters + interpreter.parameters,
+        preConditionClauses = commonPreconditions,
+        otherActions = regionActions + interpreter.actions + interpreter.addressActions,
+      )
+      .single()
   }
 
   private fun AssumeStmt.toRules(): RefineryRuleBlock =
@@ -330,25 +670,29 @@ abstract class RefineryTransitionRuleBuilder<T>(
   private fun MemoryAssignStmt<*, *, *>.toRules(): RefineryRuleBlock {
     val exprs = expr.toClauses()
     val derefs = deref.toClauses()
+    val storedType = if (pointerTypeOf(deref) == RefineryPointerType.NotPointer) NON_POINTER else POINTER
     return NondetRefineryRuleBlock(
       exprs
         .flatMap { (exprType, exprPreconditions, exprExpr, exprParams) ->
           derefs.flatMap { (derefType, derefPreconditions, derefExpr, _) ->
             when {
-              exprType != derefType -> setOf()
+              exprType != derefType || exprType != storedType -> setOf()
 
               exprType == POINTER -> {
                 val target = "target"
                 val preconditions =
                   exprPreconditions + derefPreconditions + "target($exprExpr, $target)"
-                // heap pointers may not have a target yet
-                retargetRules(
-                  pointer = derefExpr,
-                  newTarget = target,
-                  parameters = listOf("Pointer" to derefExpr, "Pointable" to target),
-                  preConditionClauses = preconditions,
-                  mayBeUnset = true,
-                )
+                storeVariants(deref, expr, target).flatMap { variant ->
+                  storeRules(
+                    pointer = derefExpr,
+                    target = target,
+                    parameters = listOf("Pointer" to derefExpr, "Pointable" to target),
+                    preConditionClauses = preconditions,
+                    variant = variant,
+                    // every pointer part gets a target when it is created
+                    mayBeUnset = false,
+                  )
+                }
               }
 
               derefType == NON_POINTER -> {
@@ -379,7 +723,31 @@ abstract class RefineryTransitionRuleBuilder<T>(
    *
    * @return A set of possible prepared refinery expressions (see [RefineryExpr]).
    */
+  private val clauseCache = IdentityHashMap<Expr<*>, Set<RefineryExpr>>()
+
   private fun Expr<*>.toClauses(): Set<RefineryExpr> =
+    clauseCache[this] ?: computeClauses().also { clauseCache[this] = it }
+
+  private fun Expr<*>.hasConditionOnly(): Boolean = toClauses().any { it.conditionOnly }
+
+  /** A conjunction holding a condition-only operand: every operand is a precondition literal. */
+  private fun conjunctionClauses(ops: List<Expr<*>>): Set<RefineryExpr> =
+    ops
+      .map { it.getNonPointerExpr(ops) }
+      .combinations
+      .map { conjuncts ->
+        RefineryExpr(
+          type = NON_POINTER,
+          preConditionClauses =
+            conjuncts.flatMap { it.preConditionClauses + it.expr }.toSet(),
+          expr = "true",
+          parameters = conjuncts.flatMap { it.parameters }.toSet(),
+          conditionOnly = true,
+        )
+      }
+      .toSet()
+
+  private fun Expr<*>.computeClauses(): Set<RefineryExpr> =
     when (this) {
       is LitExpr<*> ->
         setOfNotNull(
@@ -393,9 +761,13 @@ abstract class RefineryTransitionRuleBuilder<T>(
                 else -> error("Unsupported literal expression in RefineryRuleBuilder: $this")
               },
           ),
-          if (this == Int(0)) {
-            RefineryExpr(type = POINTER, preConditionClauses = setOf(), expr = "nullptr")
-          } else null,
+          when {
+            this == Int(0) ->
+              RefineryExpr(type = POINTER, preConditionClauses = setOf(), expr = "nullptr")
+            this is IntLitExpr && value in staticObjects ->
+              RefineryExpr(type = POINTER, preConditionClauses = setOf(), expr = staticPointer(value))
+            else -> null
+          },
         )
 
       is RefExpr<*> -> {
@@ -413,45 +785,48 @@ abstract class RefineryTransitionRuleBuilder<T>(
           RefineryExpr.single(
             type = NON_POINTER,
             preConditionClauses = setOf(),
-            expr = "$name($ENVIRONMENT)",
+            expr = "$name()",
           )
         }
       }
 
       is Dereference<*, *, *> -> {
+        // Reading the other kind of part would be an error value that excludes the whole state.
+        val readsPointer = pointerTypeOf(this) != RefineryPointerType.NotPointer
         val derefResult = { preconditions: Set<String>, referenced: String ->
           setOf(
-            RefineryExpr(
-              type = POINTER,
-              preConditionClauses = preconditions,
-              expr = referenced,
-              parameters = setOf("Pointer" to referenced),
-            ),
-            RefineryExpr(
-              type = NON_POINTER,
-              preConditionClauses = preconditions,
-              expr = "value($referenced)",
-              parameters = setOf("Value" to referenced),
-            ),
+            if (readsPointer) {
+              RefineryExpr(
+                type = POINTER,
+                preConditionClauses = preconditions,
+                expr = referenced,
+                parameters = setOf("Pointer" to referenced),
+              )
+            } else {
+              RefineryExpr(
+                type = NON_POINTER,
+                preConditionClauses = preconditions,
+                expr = "value($referenced)",
+                parameters = setOf("Value" to referenced),
+              )
+            }
           )
         }
 
+        // An address that names no global object matches no region: the rule would silently drop
+        // its paths.
         val arrayExprs =
-          array.toClauses().let { r ->
-            r.filter { it.type == POINTER }.ifEmpty { r } // prefer pointer expressions
+          array.toClauses().filter { it.type == POINTER }.ifEmpty {
+            throw UnsupportedOperationException(
+              "Dereference of an unknown integer address is not supported by the Refinery encoding: $this"
+            )
           }
         val derefCount = dereferenceCounter++
-        arrayExprs.flatMap { (type, basePreconditions, baseExpr, _) ->
+        arrayExprs.flatMap { (_, basePreconditions, baseExpr, _) ->
           val region = "region_${derefCount}"
           val base = "base_${derefCount}"
           val preconditions = basePreconditions.toMutableSet()
-          if (type == POINTER) {
-            preconditions.add("target($baseExpr, $base)")
-          } else {
-            preconditions.add("address($region) == $baseExpr")
-            preconditions.add("parts($region, $base)")
-            preconditions.add("offset($base) == 0")
-          }
+          preconditions.add("target($baseExpr, $base)")
 
           when {
             offset == Int(0) -> {
@@ -554,12 +929,21 @@ abstract class RefineryTransitionRuleBuilder<T>(
       is EqExpr<*> -> equalityCheck("==")
       is NeqExpr<*> -> equalityCheck("!=")
 
-      is AndExpr -> toNonPointerClauses("&&")
-      is OrExpr -> toNonPointerClauses("||")
+      is AndExpr ->
+        if (ops.any { it.hasConditionOnly() }) conjunctionClauses(ops)
+        else toNonPointerClauses("&&")
+      is OrExpr ->
+        // Each disjunct becomes a rule of its own.
+        if (ops.any { it.hasConditionOnly() }) {
+          ops.flatMap { op -> op.getNonPointerExpr(this).map { it.copy(conditionOnly = true) } }
+        } else toNonPointerClauses("||")
       is NotExpr ->
         when (val op = op) {
           is EqExpr<*> -> NeqExpr.create2(op.leftOp, op.rightOp).toClauses()
           is NeqExpr<*> -> EqExpr.create2(op.leftOp, op.rightOp).toClauses()
+          is NotExpr -> op.op.toClauses()
+          is AndExpr if op.hasConditionOnly() -> Or(op.ops.map { Not(it) }).toClauses()
+          is OrExpr if op.hasConditionOnly() -> And(op.ops.map { Not(it) }).toClauses()
           else -> toNonPointerClauses("!")
         }
 
@@ -572,13 +956,8 @@ abstract class RefineryTransitionRuleBuilder<T>(
       is IteExpr<*> -> {
         val getBranchExprs = { condExprs: Set<RefineryExpr>, branchExprs: Set<RefineryExpr> ->
           condExprs.flatMap { (_, condPreconditions, condExpr, _) ->
-            branchExprs.map { (type, preconds, expr, params) ->
-              RefineryExpr(
-                type = type,
-                preConditionClauses = condPreconditions + listOf(condExpr) + preconds,
-                expr = expr,
-                parameters = params,
-              )
+            branchExprs.map {
+              it.copy(preConditionClauses = condPreconditions + listOf(condExpr) + it.preConditionClauses)
             }
           }
         }
@@ -623,6 +1002,16 @@ abstract class RefineryTransitionRuleBuilder<T>(
         it.toSet()
       }
 
+  /** A value to embed in a term: a condition-only expression cannot be one. */
+  private fun Expr<*>.getTermExpr(parent: Any): Set<RefineryExpr> =
+    getNonPointerExpr(parent).also { exprs ->
+      if (exprs.any { it.conditionOnly }) {
+        throw UnsupportedOperationException(
+          "A pointer comparison used as a value is not supported by the Refinery encoding: $parent"
+        )
+      }
+    }
+
   private fun BinaryExpr<*, *>.equalityCheck(operator: String): Collection<RefineryExpr> {
     val lExprs = leftOp.toClauses()
     val rExprs = rightOp.toClauses()
@@ -652,6 +1041,7 @@ abstract class RefineryTransitionRuleBuilder<T>(
               preConditionClauses = preconditions,
               expr = "$lTarget $operator $rTarget",
               parameters = lParams + rParams,
+              conditionOnly = true,
             )
           }
 
@@ -667,7 +1057,7 @@ abstract class RefineryTransitionRuleBuilder<T>(
     check(operator in supportedOperators) {
       "Unsupported operator '$operator' at $this in RefineryRuleBuilder."
     }
-    val innerExprs = op.getNonPointerExpr(this)
+    val innerExprs = op.getTermExpr(this)
     return innerExprs.map { (_, innerPreconditions, innerExpr, innerParams) ->
       RefineryExpr(
         type = NON_POINTER,
@@ -684,8 +1074,8 @@ abstract class RefineryTransitionRuleBuilder<T>(
     check(operator in supportedOperators) {
       "Unsupported operator '$operator' at $this in RefineryRuleBuilder."
     }
-    val lExprs = leftOp.getNonPointerExpr(this)
-    val rExprs = rightOp.getNonPointerExpr(this)
+    val lExprs = leftOp.getTermExpr(this)
+    val rExprs = rightOp.getTermExpr(this)
     return lExprs.flatMap { (_, lPreconditions, lExpr, lParams) ->
       rExprs.map { (_, rPreconditions, rExpr, rParams) ->
         RefineryExpr(
@@ -705,7 +1095,7 @@ abstract class RefineryTransitionRuleBuilder<T>(
       "Unsupported operator '$operator' at $this in RefineryRuleBuilder."
     }
     return ops
-      .map { it.getNonPointerExpr(this) }
+      .map { it.getTermExpr(this) }
       .combinations
       .map { ops ->
         RefineryExpr(

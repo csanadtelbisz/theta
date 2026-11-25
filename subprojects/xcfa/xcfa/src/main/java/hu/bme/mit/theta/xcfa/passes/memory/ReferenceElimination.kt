@@ -245,7 +245,7 @@ class ReferenceElimination(
             val objectBase = cnt // capture: reading cnt hands out this base and advances it
             val lit =
               if (useMemoryAllocationExpression) {
-                MemoryAllocationExpr(BigInteger.valueOf(1), varDecl.type)
+                MemoryAllocationExpr(refinerySize(ptrType.embeddedType), varDecl.type)
               } else {
                 CComplexType.getType(varDecl.ref, parseContext)
                   .getValue(
@@ -289,6 +289,9 @@ class ReferenceElimination(
     checkState(globalReferredVars is Map<*, *>, "ReferenceElimination needs info on references")
     return globalReferredVars as Map<VarDecl<*>, Pair<VarDecl<Type>, SequenceLabel>>
   }
+
+  private fun refinerySize(type: CComplexType): BigInteger =
+    BigInteger.valueOf(ObjectLayout.sizeofBytes(type, parseContext.architecture).toLong())
 
   private fun cellsAreAtomic(type: CComplexType): Boolean =
     type.isAtomic || (type is CArray && cellsAreAtomic(type.embeddedType))
@@ -381,7 +384,7 @@ class ReferenceElimination(
           val (assign1, assign2) =
             if (useMemoryAllocationExpression) {
               null to
-                AssignStmtLabel(varDecl, MemoryAllocationExpr(BigInteger.valueOf(1), varDecl.type))
+                AssignStmtLabel(varDecl, MemoryAllocationExpr(refinerySize(ptrType.embeddedType), varDecl.type))
             } else {
               AssignStmtLabel(ptrVar, Add(ptrVar.ref, step), ptrType.smtType) to
                 AssignStmtLabel(varDecl, ptrVar.ref)
